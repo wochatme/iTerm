@@ -148,6 +148,7 @@ static int AppRun(LPTSTR /*lpstrCmdLine*/ = NULL, int nCmdShow = SW_SHOWDEFAULT)
 	{
 		HWND hWndTTY = wndMain.GetTTYWindowHandle();
 		PuTTY_AttachWindow(hWndTTY, wndMain.m_hWnd, TTYTAB_WINDOW_HEIGHT);
+		wndMain.AttachTerminalHandle(PuTTY_GetActiveTerm());
 		nRet = theLoop.Run();
 	}
 

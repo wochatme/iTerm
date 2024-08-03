@@ -18,3 +18,8 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
 void PuTTY_EnterSizing(void);
 void PuTTY_ExitSizing(void);
 
+void* PuTTY_GetActiveTerm(void);
+
+void* PuTTY_NewSession();
+
+BOOL PuTTY_SwitchSession(void* handle);

@@ -47,6 +47,7 @@ public:
 	BEGIN_MSG_MAP(CMainFrame)
 		MESSAGE_HANDLER(WM_ERASEBKGND, OnEraseBackground)
 		MESSAGE_HANDLER(WM_PUTTY_NOTIFY, OnPuTTYNotify)
+		MESSAGE_HANDLER(WM_NOTIFY, OnNotify)
 		MESSAGE_HANDLER(WM_SIZE, OnSize)
 		MESSAGE_HANDLER(WM_SETFOCUS, OnSetFocus)
 		MESSAGE_HANDLER(WM_ENTERSIZEMOVE, OnEnterSizeMove)
@@ -72,6 +73,7 @@ public:
 
 		return 0;
 	}
+
 	LRESULT OnCreate(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/)
 	{
 		HMENU m;
@@ -86,7 +88,7 @@ public:
 			CTCS_DRAGREARRANGE
 		);
 
-		m_viewTab.InsertItem(0, L"cmd.exe", -1, L"command line", true);
+		m_viewTab.InsertItem(0, L"cmd.exe[00]", -1, L"command line", true);
 
 		m = GetSystemMenu(FALSE);
 		AppendMenu(m, MF_SEPARATOR, 0, 0);
@@ -168,10 +170,77 @@ public:
 		return 0;
 	}
 
+	LRESULT OnNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+	{
+		NMHDR* pNMHDR = (NMHDR*)lParam;
+		if (pNMHDR)
+		{
+			if (pNMHDR->hwndFrom == m_viewTab)
+			{
+				NMCTCITEM* pNMCTCITEM = (NMCTCITEM*)lParam;
+				
+				int idx = pNMCTCITEM->iItem;
+				int count = m_viewTab.GetItemCount();
+#if 0
+				int sel = m_viewTab.GetCurSel();
+#endif 
+				switch (pNMHDR->code)
+				{
+				case NM_CLICK:
+					if (idx >= 0 && idx < count)
+					{
+						XCustomTabItem* pIterm = m_viewTab.GetItem(idx);
+						if (pIterm)
+						{
+							void* handle = pIterm->GetPrivateData();
+							BOOL bRet = PuTTY_SwitchSession(handle);
+							if (bRet)
+							{
+								m_viewTTY.SetFocus();
+								return 0;
+							}
+							else
+								return 1;
+						}
+					}
+					break;
+				default:
+					bHandled = FALSE;
+				}
+			}
+		}
+		return 0;
+	}
+
 	LRESULT OnSysCommand(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 	{
 		switch (wParam & ~0xF) /* low 4 bits reserved to Windows */
 		{
+		case IDM_NEW_SESSION:
+		{
+			void* term = PuTTY_NewSession();
+			if (term)
+			{
+				wchar_t title[128] = { 0 };
+				int idx = m_viewTab.GetItemCount();
+
+				swprintf((wchar_t*)title, 128, L"cmd.exe[%02d]", idx);
+
+				m_viewTab.InsertItem(idx, title, -1, L"command line", true);
+
+				XCustomTabItem* pIterm = m_viewTab.GetItem(idx);
+				if (pIterm)
+				{
+					pIterm->SetPrivateData(term);
+				}
+				m_viewTTY.SetFocus();
+			}
+			else
+			{
+				MessageBox(L"You can open 60 tabs at maximum", L"Maximum Tabs Are Reached", MB_OK);
+			}
+		}
+			break;
 		case IDM_NEW_WINDOW:
 		{
 			WCHAR exeFile[MAX_PATH + 1] = { 0 };
@@ -203,5 +272,15 @@ public:
 	HWND GetTTYWindowHandle()
 	{
 		return m_viewTTY.m_hWnd;
+	}
+
+	void AttachTerminalHandle(void* term)
+	{
+		int idx = m_viewTab.GetCurSel();
+		XCustomTabItem* pIterm = m_viewTab.GetItem(idx);
+		if (pIterm)
+		{
+			pIterm->SetPrivateData(term);
+		}
 	}
 };

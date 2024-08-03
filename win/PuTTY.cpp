@@ -48,6 +48,7 @@ struct TermList
 static TermList* term_head = NULL;
 static TermList* term_tail = NULL;
 static TermList* term_curr = NULL;
+static int term_count = 0;
 
 static void free_term_list(TermList* tl)
 {
@@ -82,9 +83,13 @@ static void cleanup_term_list(void)
     {
         next = tl->next;
         free_term_list(tl);
+        term_count--;
         tl = next;
     }
+
+    assert(term_count == 0);
 }
+
 /////////////////////////////////////////////////////////////
 const char* const appname = "iTerm";
 /*
@@ -129,6 +134,7 @@ struct ConPTY {
     HandleWait* subprocess;
     bool exited;
     DWORD exitstatus;
+    Terminal* term;
     Seat* seat;
     LogContext* logctx;
     int bufsize;
@@ -249,8 +255,13 @@ static size_t conpty_gotdata(
 
         return 0;
     }
-    else {
+    else 
+    {
+        assert(conpty->term);
+        return term_data(conpty->term, data, len); // for multiple sessions
+#if 0
         return seat_stdout(conpty->seat, data, len);
+#endif 
     }
 }
 
@@ -398,6 +409,7 @@ static char* conpty_init(const BackendVtable* vt, Seat* seat,
     conpty->backend.vt = vt;
     *backend_handle = &conpty->backend;
 
+    conpty->term = (Terminal*)host; // a trick here
     conpty->seat = seat;
     conpty->logctx = logctx;
 
@@ -973,7 +985,8 @@ static void start_backend(void)
 
     seat_set_trust_status(&wgs.seat, true);
     error = backend_init(vt, &wgs.seat, &backend, logctx, conf,
-        conf_get_str(conf, CONF_host),
+        /*conf_get_str(conf, CONF_host),*/
+        (const char*)term,
         conf_get_int(conf, CONF_port),
         &realhost,
         conf_get_bool(conf, CONF_tcp_nodelay),
@@ -6760,6 +6773,7 @@ int PuTTY_Init(HINSTANCE hInstance)
     term_head = snew(TermList);
     memset(term_head, 0, sizeof(TermList));
     term_curr = term_tail = term_head;
+    term_count = 1;
 
     dll_hijacking_protection();
 
@@ -7012,6 +7026,10 @@ int PuTTY_AttachWindow(HWND hWnd, HWND hWndParent, int heightTab)
     return 0;
 }
 
+void* PuTTY_GetActiveTerm(void)
+{
+    return term_curr;
+}
 
 void PuTTY_EnterSizing(void)
 {
@@ -7049,6 +7067,112 @@ void PuTTY_ExitSizing(void)
     InvalidateRect(wgs.term_hwnd, NULL, true);
 
     PostMessage(hWndMain, WM_PUTTY_NOTIFY, term->rows, term->cols);
+}
+
+void* PuTTY_NewSession()
+{
+    void* vRet = NULL;
+
+    if (term_count <= 60) // the maximum tabs we can support is 63
+    {
+        int row, col;
+
+        TermList* sess = snew(TermList);
+        memset(sess, 0, sizeof(TermList));
+
+        term_tail->next = sess;
+        sess->prev = term_tail;
+        term_curr = term_tail = sess;
+        term_count++;
+
+        conf = term_curr->conf = conf_new();
+        gui_term_process_cmdline(conf, (char*)"");
+        term_curr->term = term_init(conf, &ucsdata, wintw);
+
+        //shellcmd = NULL; // (char*)"ssh -i d:\\zterm\\1.pem ubuntu@zterm.ai";
+
+        row = term->rows;
+        col = term->cols;
+        term->term_status &= ~TERM_SHOWING;
+        term_set_focus(term, false);
+
+        term = term_curr->term;
+        term->term_status |= TERM_SHOWING;
+        setup_clipboards(term, conf);
+        logctx = log_init(&wgs.logpolicy, conf);
+        term_curr->logctx = logctx;
+        term_provide_logctx(term, logctx);
+
+        term_size(term, row, col, conf_get_int(conf, CONF_savelines));
+        start_backend();
+        term_curr->backend = backend;
+        term_curr->ldisc = ldisc;
+
+        term_set_focus(term, true);
+        term_update(term);
+
+        {
+            SCROLLINFO si;
+            si.cbSize = sizeof(si);
+            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+            si.nMin = 0;
+            si.nMax = term->rows - 1;
+            si.nPage = term->rows;
+            si.nPos = 0;
+            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
+        }
+
+        InvalidateRect(wgs.term_hwnd, NULL, true);
+
+        vRet = term_curr;
+    }
+
+    return vRet;
+}
+
+BOOL PuTTY_SwitchSession(void* handle)
+{
+    BOOL bRet = FALSE;
+    TermList* tl = (TermList*)handle;
+    if (tl)
+    {
+#if 0
+        int row = term->rows;
+        int col = term->cols;
+#endif 
+        term->term_status &= ~TERM_SHOWING;
+        term_set_focus(term, false);
+
+        conf = tl->conf;
+        logctx = tl->logctx;
+        backend = tl->backend;
+        ldisc = tl->ldisc;
+
+        term = tl->term;
+
+        term->term_status |= TERM_SHOWING;
+        term_set_focus(term, true);
+        term_update(term);
+
+        term_curr = tl;
+
+        {
+            SCROLLINFO si;
+            si.cbSize = sizeof(si);
+            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+            si.nMin = 0;
+            si.nMax = term->rows - 1;
+            si.nPage = term->rows;
+            si.nPos = 0;
+            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
+        }
+
+        InvalidateRect(wgs.term_hwnd, NULL, true);
+
+        bRet = TRUE;
+    }
+
+    return bRet;
 }
 
 

@@ -184,7 +184,7 @@ protected:
 	_CSTRING_NS::CString m_sToolTip;
 	bool m_bHighlighted;
 	bool m_bCanClose;
-
+	void* m_private;
 	// Constructors/Destructors
 public:
 	XCustomTabItem() :
@@ -192,6 +192,7 @@ public:
 		m_bHighlighted(false),
 		m_bCanClose(true)
 	{
+		m_private = NULL;
 		::SetRectEmpty(&m_rcItem);
 	}
 
@@ -229,6 +230,17 @@ public:
 	{
 		return &m_rcItem;
 	}
+
+	void SetPrivateData(void* privdatedata)
+	{
+		m_private = privdatedata;
+	}
+
+	void* GetPrivateData()
+	{
+		return m_private;
+	}
+
 	bool SetRect(RECT rcItem)
 	{
 		m_rcItem = rcItem;
@@ -2468,6 +2480,24 @@ public:
 		return -1;
 	}
 
+#if 0
+	int InsertItem(int nItem, LPCTSTR sText = NULL, int nImage = -1,
+		LPCTSTR sToolTip = NULL, void* privdatedata, bool bSelectItem = false)
+	{
+		T* pT = static_cast<T*>(this);
+		TItem* pItem = pT->CreateNewItem();
+		if (pItem)
+		{
+			pItem->SetText(sText);
+			pItem->SetImageIndex(nImage);
+			pItem->SetToolTip(sToolTip);
+			pItem->SetPrivateData(privdatedata);
+
+			return InsertItem(nItem, pItem, bSelectItem);
+		}
+		return -1;
+	}
+#endif 
 	int InsertItem(int nItem, TItem* pItem, bool bSelectItem = false)
 	{
 		T* pT = static_cast<T*>(this);
