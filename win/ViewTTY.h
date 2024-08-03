@@ -19,7 +19,7 @@ static ATL::CWndClassInfo& GetWndClassInfo() \
 #define MESSAGE_PUTTYMSG(func) \
 	{ \
 		bHandled = TRUE; \
-		lResult = func(m_hWnd, uMsg, wParam, lParam, &bHandled); \
+		lResult = func(m_hWnd, uMsg, wParam, lParam, bHandled); \
 		if(bHandled) \
 			return TRUE; \
 	}

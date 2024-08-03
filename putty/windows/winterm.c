@@ -1,3 +1,4 @@
+#if 0
 /*
  * window.c - the PuTTY(tel)/pterm main program, which runs a PuTTY
  * terminal emulator and backend in a window.
@@ -96,7 +97,6 @@ static void cleanup_term_list(void)
         tl = next;
     }
 }
-/////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////
 const char* const appname = "iTerm";
@@ -3562,7 +3562,7 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
                         term, (unsigned short *)(buff+i), 1);
                 }
             }
-            safefree(buff);
+            sfree(buff);
         }
         ImmReleaseContext(hwnd, hIMC);
         return 1;
@@ -6449,3 +6449,5 @@ void PuTTY_ExitSizing(void)
 
     PostMessage(hWndMain, WM_PUTTY_NOTIFY, term->rows, term->cols);
 }
+#endif 
+

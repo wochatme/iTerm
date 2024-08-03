@@ -8,19 +8,16 @@
 #include <atldlgs.h>
 #include <atlctrlw.h>
 #include <atlscrl.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-////////////////////////////////////////////////
-#include "winterm.h"
-////////////////////////////////////////////////
-#ifdef __cplusplus
-}
-#endif
+#include <atlgdi.h>
 
 #include "resource.h"
 
+#include "PuTTY.hpp"
+
+#include "iTerm.h"
+
+#include "XTabCtl.h"
+#include "ViewTab.h"
 #include "ViewTTY.h"
 #include "WinDlg.h"
 #include "MainFrm.h"
@@ -150,7 +147,7 @@ static int AppRun(LPTSTR /*lpstrCmdLine*/ = NULL, int nCmdShow = SW_SHOWDEFAULT)
 	if (wndMain.CreateEx())
 	{
 		HWND hWndTTY = wndMain.GetTTYWindowHandle();
-		PuTTY_AttachWindow(hWndTTY, wndMain.m_hWnd, 0);
+		PuTTY_AttachWindow(hWndTTY, wndMain.m_hWnd, TTYTAB_WINDOW_HEIGHT);
 		nRet = theLoop.Run();
 	}
 

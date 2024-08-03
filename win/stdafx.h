@@ -19,9 +19,16 @@
 #include <memory.h>
 #include <tchar.h>
 #include <Mmsystem.h>
+#include <ctype.h>
+#include <time.h>
+#include <limits.h>
+#include <assert.h>
+#include <wchar.h>
 
 #include <atlbase.h>
 #include <atlapp.h>
+#include <atlcoll.h>
+#include <atlstr.h>
 
 extern CAppModule _Module;
 

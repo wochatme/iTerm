@@ -1,8 +1,20 @@
 // MainFrm.h : interface of the CMainFrame class
 //
 /////////////////////////////////////////////////////////////////////////////
-
 #pragma once
+
+/* From MSDN: In the WM_SYSCOMMAND message, the four low-order bits of
+ * wParam are used by Windows, and should be masked off, so we shouldn't
+ * attempt to store information in them. Hence all these identifiers have
+ * the low 4 bits clear. Also, identifiers should < 0xF000. */
+
+#define IDM_NEW_WINDOW		0x0010
+#define IDM_NEW_SESSION		0x0020
+#define IDM_COPY_ALL		0x0030
+#define IDM_TTY_SETTING		0x0040
+#define	IDM_CLEAR_SB		0x0050
+#define IDM_ABOUT_ITERM		0x0060
+
 
 class CMainFrame : 
 	public CFrameWindowImpl<CMainFrame>, 
@@ -13,6 +25,7 @@ public:
 	DECLARE_FRAME_WND_CLASS(NULL, IDR_MAINFRAME)
 
 	CTTYView m_viewTTY;
+	CTabView m_viewTab;
 
 	virtual BOOL PreTranslateMessage(MSG* pMsg)
 	{
@@ -34,9 +47,11 @@ public:
 	BEGIN_MSG_MAP(CMainFrame)
 		MESSAGE_HANDLER(WM_ERASEBKGND, OnEraseBackground)
 		MESSAGE_HANDLER(WM_PUTTY_NOTIFY, OnPuTTYNotify)
+		MESSAGE_HANDLER(WM_SIZE, OnSize)
 		MESSAGE_HANDLER(WM_SETFOCUS, OnSetFocus)
 		MESSAGE_HANDLER(WM_ENTERSIZEMOVE, OnEnterSizeMove)
 		MESSAGE_HANDLER(WM_EXITSIZEMOVE, OnExitSizeMove)
+		MESSAGE_HANDLER(WM_SYSCOMMAND, OnSysCommand)
 		MESSAGE_HANDLER(WM_CREATE, OnCreate)
 		MESSAGE_HANDLER(WM_DESTROY, OnDestroy)
 		CHAIN_MSG_MAP(CUpdateUI<CMainFrame>)
@@ -59,7 +74,29 @@ public:
 	}
 	LRESULT OnCreate(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM /*lParam*/, BOOL& /*bHandled*/)
 	{
-		m_hWndClient = m_viewTTY.Create(m_hWnd, rcDefault, NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_VSCROLL);
+		HMENU m;
+
+		m_viewTTY.Create(m_hWnd, rcDefault, NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_VSCROLL);
+		m_viewTab.Create(m_hWnd, rcDefault, NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
+
+		m_viewTab.ModifyStyle(0,
+			CTCS_TOOLTIPS |
+			CTCS_SCROLL |
+			CTCS_CLOSEBUTTON |
+			CTCS_DRAGREARRANGE
+		);
+
+		m_viewTab.InsertItem(0, L"cmd.exe", -1, L"command line", true);
+
+		m = GetSystemMenu(FALSE);
+		AppendMenu(m, MF_SEPARATOR, 0, 0);
+		AppendMenu(m, MF_ENABLED, IDM_NEW_WINDOW, L"New Window");
+		AppendMenu(m, MF_ENABLED, IDM_NEW_SESSION, L"Ne&w Session");
+		AppendMenu(m, MF_ENABLED, IDM_TTY_SETTING, L"TTY Settings...");
+		AppendMenu(m, MF_ENABLED, IDM_COPY_ALL, L"C&opy All to Clipboard");
+		AppendMenu(m, MF_ENABLED, IDM_CLEAR_SB, L"C&lear Scrollback");
+		AppendMenu(m, MF_SEPARATOR, 0, 0);
+		AppendMenu(m, MF_ENABLED, IDM_ABOUT_ITERM, L"&About iTerm");
 
 		// register object for message filtering and idle updates
 		CMessageLoop* pLoop = _Module.GetMessageLoop();
@@ -102,6 +139,64 @@ public:
 		terminal_has_focus = true;
 
 		bHandled = FALSE;
+		return 0;
+	}
+
+	LRESULT OnSize(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+	{
+		RECT rect = {};
+		GetClientRect(&rect);
+
+		int bottom = rect.bottom;
+
+		if (m_viewTab.IsWindow())
+		{
+			rect.bottom = rect.top + TTYTAB_WINDOW_HEIGHT;
+			::SetWindowPos(m_viewTab, NULL, rect.left, rect.top,
+				rect.right - rect.left, TTYTAB_WINDOW_HEIGHT,
+				SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+
+		if (m_viewTTY.IsWindow())
+		{
+			rect.top += TTYTAB_WINDOW_HEIGHT;
+			rect.bottom = bottom;
+			::SetWindowPos(m_viewTTY, NULL, rect.left, rect.top,
+				rect.right - rect.left, rect.bottom - rect.top,
+				SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		return 0;
+	}
+
+	LRESULT OnSysCommand(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+	{
+		switch (wParam & ~0xF) /* low 4 bits reserved to Windows */
+		{
+		case IDM_NEW_WINDOW:
+		{
+			WCHAR exeFile[MAX_PATH + 1] = { 0 };
+			DWORD len = GetModuleFileNameW(HINST_THISCOMPONENT, exeFile, MAX_PATH);
+			if (len)
+			{
+				STARTUPINFOW si = { 0 };
+				PROCESS_INFORMATION pi = { 0 };
+				si.cb = sizeof(STARTUPINFOW);
+				CreateProcessW(NULL, exeFile, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+			}
+		}
+			break;
+#if 0
+		case IDM_ABOUT:
+		{
+			CAboutDlg dlg;
+			dlg.DoModal();
+		}
+			break;
+#endif 
+		default:
+			bHandled = FALSE;
+			break;
+		}
 		return 0;
 	}
 

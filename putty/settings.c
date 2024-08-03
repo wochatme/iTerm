@@ -1148,8 +1148,12 @@ void load_open_settings(settings_r *sesskey, Conf *conf)
     gppb(sesskey, "DisableBidi", false, conf, CONF_no_bidi);
     gppb(sesskey, "WinNameAlways", true, conf, CONF_win_name_always);
     gpps(sesskey, "WinTitle", "", conf, CONF_wintitle);
+#if 0
     gppi(sesskey, "TermWidth", 80, conf, CONF_width);
     gppi(sesskey, "TermHeight", 24, conf, CONF_height);
+#endif 
+    gppi(sesskey, "TermWidth", 128, conf, CONF_width);
+    gppi(sesskey, "TermHeight", 40, conf, CONF_height);
     gppfont(sesskey, "Font", conf, CONF_font);
     gppi(sesskey, "FontQuality", FQ_DEFAULT, conf, CONF_font_quality);
     gppi(sesskey, "FontVTMode", VT_UNICODE, conf, CONF_vtmode);

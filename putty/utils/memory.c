@@ -2619,8 +2619,10 @@ void *safemalloc(size_t factor1, size_t factor2, size_t addend)
 #elif defined ALLOCATION_ALIGNMENT
     p = aligned_alloc(ALLOCATION_ALIGNMENT, size);
 #else
-    //p = malloc(size);
+/*
+    p = malloc(size);
 	TopMemoryContext->isReset = false;
+*/
 	p = TopMemoryContext->methods->alloc(TopMemoryContext, size, 0);
 
 #if 0
@@ -2656,8 +2658,10 @@ void *saferealloc(void *ptr, size_t n, size_t size)
 #elif defined ALLOCATION_ALIGNMENT
             p = aligned_alloc(ALLOCATION_ALIGNMENT, size);
 #else
-            //p = malloc(size);
+/*
+            p = malloc(size);
 			TopMemoryContext->isReset = false;
+*/
 			p = TopMemoryContext->methods->alloc(TopMemoryContext, size, 0);
 
 #endif
@@ -2683,7 +2687,7 @@ void safefree(void *ptr)
 #ifdef MINEFIELD
         minefield_c_free(ptr);
 #else
-        //free(ptr);
+        /* free(ptr); */
 		MCXT_METHOD(ptr, free_p) (ptr);
 #endif
     }

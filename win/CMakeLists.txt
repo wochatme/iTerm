@@ -6,6 +6,7 @@ add_definitions(-D_UNICODE -DUNICODE -DNOMINMAX)
 add_executable(${PROJECT_NAME} WIN32 
 	iTerm.cpp
 	stdafx.cpp
+	PuTTY.cpp
 	iTerm.rc
 	)
 

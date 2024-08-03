@@ -97,7 +97,7 @@ void mempool_term(void);
  * the freed memory at the previous location.
  */
 void *safegrowarray(void *array, size_t *size, size_t eltsize,
-                    size_t oldlen, size_t extralen, bool private);
+                    size_t oldlen, size_t extralen, bool secret);
 
 /* The master macro wrapper, of which all others are special cases */
 #define sgrowarray_general(array, size, n, m, priv)                     \
