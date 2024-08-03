@@ -78,6 +78,7 @@ public:
 		pLoop->RemoveMessageFilter(this);
 		pLoop->RemoveIdleHandler(this);
 
+		ShowCursor(TRUE);
 		bHandled = FALSE;
 		return 1;
 	}

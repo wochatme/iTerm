@@ -11,6 +11,8 @@
 
 #include "tree234.h"
 
+#define TERM_SHOWING        0x00000001
+
 struct beeptime {
     struct beeptime *next;
     unsigned long ticks;
@@ -429,6 +431,8 @@ struct terminal_tag {
         WIN_RESIZE_NO, WIN_RESIZE_NEED_SEND, WIN_RESIZE_AWAIT_REPLY
     } win_resize_pending;
     int win_resize_pending_w, win_resize_pending_h;
+
+    unsigned int term_status; /* we use this variable to control the output of the terminal */
 };
 
 static inline bool in_utf(Terminal *term)

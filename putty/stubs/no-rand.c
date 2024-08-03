@@ -11,6 +11,9 @@ void random_read(void *out, size_t size)
 
 void random_save_seed(void)
 {
+#if 0
+    MessageBoxA(NULL, "random", "x", MB_OK);
+#endif 
 }
 
 void random_destroy_seed(void)

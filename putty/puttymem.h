@@ -33,6 +33,10 @@ void safefree(void *);
 #define sresize(ptr, n, type) TYPECHECK((type *)0 == (ptr), \
     ((type *)snrealloc((ptr), (n), sizeof(type))))
 
+/* use memory pool, the code is from PostgreSQL kernel */
+bool mempool_init(void);
+void mempool_term(void);
+
 /*
  * For cases where you want to allocate a struct plus a subsidiary
  * data buffer in one step, this macro lets you add a constant to the

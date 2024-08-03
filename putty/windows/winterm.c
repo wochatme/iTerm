@@ -14,9 +14,6 @@
 #define COMPILE_MULTIMON_STUBS
 
 #include "putty.h"
-#if 0
-#include "ssh.h"
-#endif 
 #include "terminal.h"
 #include "storage.h"
 #include "putty-rc.h"
@@ -221,12 +218,12 @@ static void setup_clipboards(Terminal *, Conf *);
 
 /* Window layout information */
 static void reset_window(int);
-static int extra_width, extra_height;
-static int font_width, font_height;
-static bool font_dualwidth, font_varpitch;
-static int offset_width, offset_height;
+static int extra_width = 0, extra_height = 0;
+static int font_width = 0, font_height = 0;
+static bool font_dualwidth = 0, font_varpitch = 0;
+static int offset_width = 0, offset_height = 0;
 static bool was_zoomed = false;
-static int prev_rows, prev_cols;
+static int prev_rows = 0, prev_cols = 0;
 
 static void flash_window(int mode);
 static void sys_cursor_update(void);
@@ -234,15 +231,15 @@ static bool get_fullscreen_rect(RECT *ss);
 
 static int caret_x = -1, caret_y = -1;
 
-static int kbd_codepage;
+static int kbd_codepage = 0;
 
-static Ldisc *ldisc;
-static Backend *backend;
+static Ldisc *ldisc = NULL;
+static Backend *backend = NULL;
 
-static cmdline_get_passwd_input_state cmdline_get_passwd_state;
+static cmdline_get_passwd_input_state cmdline_get_passwd_state = { 0 };
 
-static struct unicode_data ucsdata;
-static bool session_closed;
+static struct unicode_data ucsdata = { 0 };
+static bool session_closed = false;
 static bool reconfiguring = false;
 
 static const SessionSpecial *specials = NULL;
@@ -251,27 +248,28 @@ static int n_specials = 0;
 
 #define TIMING_TIMER_ID 1234
 static long timing_next_time;
-
+#if 0
 static struct {
     HMENU menu;
 } popup_menus[2];
 enum { SYSMENU, CTXMENU };
+#endif 
 static HMENU savedsess_menu;
 
-static Conf *conf;
-static LogContext *logctx;
-static Terminal *term;
+static Conf *conf = NULL;
+static LogContext *logctx = NULL;
+static Terminal *term = NULL;
 
 static void conf_cache_data(void);
-static int cursor_type;
-static int vtmode;
+static int cursor_type = 0;
+static int vtmode = 0;
 
-static struct sesslist sesslist;       /* for saved-session menu */
+static struct sesslist sesslist = { 0 };       /* for saved-session menu */
 
-#define FONT_NORMAL 0
-#define FONT_BOLD 1
-#define FONT_UNDERLINE 2
-#define FONT_BOLDUND 3
+#define FONT_NORMAL     0
+#define FONT_BOLD       1
+#define FONT_UNDERLINE  2
+#define FONT_BOLDUND    3
 #define FONT_WIDE       0x04
 #define FONT_HIGH       0x08
 #define FONT_NARROW     0x10
@@ -283,21 +281,21 @@ static struct sesslist sesslist;       /* for saved-session menu */
 
 #define FONT_MAXNO      0x40
 #define FONT_SHIFT      5
-static HFONT fonts[FONT_MAXNO];
-static LOGFONT lfont;
-static bool fontflag[FONT_MAXNO];
+static HFONT fonts[FONT_MAXNO] = { 0 };
+static LOGFONT lfont = { 0 };
+static bool fontflag[FONT_MAXNO] = { 0 };
 static enum {
     BOLD_NONE, BOLD_SHADOW, BOLD_FONT
 } bold_font_mode;
-static bool bold_colours;
+static bool bold_colours = false;
 static enum {
     UND_LINE, UND_FONT
 } und_mode;
-static int descent, font_strikethrough_y;
+static int descent = 0, font_strikethrough_y = 0;
 
-static COLORREF colours[OSC4_NCOLOURS];
-static HPALETTE pal;
-static LPLOGPALETTE logpal;
+static COLORREF colours[OSC4_NCOLOURS] = { 0 };
+static HPALETTE pal = NULL;
+static LPLOGPALETTE logpal = NULL;
 bool tried_pal = false;
 COLORREF colorref_modifier = 0;
 
@@ -314,10 +312,10 @@ static struct _dpi_info {
     RECT new_wnd_rect;
 } dpi_info;
 
-static HBITMAP caretbm;
+static HBITMAP caretbm = NULL;
 
-static int dbltime, lasttime, lastact;
-static Mouse_Button lastbtn;
+static int dbltime = 0, lasttime = 0, lastact = 0;
+static Mouse_Button lastbtn = MBT_NOTHING;
 
 /* this allows xterm-style mouse handling. */
 static bool send_raw_mouse = false;
@@ -327,7 +325,7 @@ static bool pointer_indicates_raw_mouse = false;
 
 static BusyStatus busy_status = BUSY_NOT;
 
-static wchar_t *window_name, *icon_name;
+static wchar_t *window_name = NULL, *icon_name = NULL;
 
 static int compose_state = 0;
 
@@ -396,11 +394,11 @@ static const TermWinVtable windows_termwin_vt = {
     .unthrottle = wintw_unthrottle,
 };
 
-static TermWin wintw[1];
-static HDC wintw_hdc;
-
+static TermWin wintw[1] = { 0 };
+static HDC wintw_hdc = NULL;
+#if 0
 static HICON trust_icon = INVALID_HANDLE_VALUE;
-
+#endif 
 const bool share_can_be_downstream = true;
 const bool share_can_be_upstream = true;
 
@@ -516,7 +514,7 @@ static void start_backend(void)
      * Set up a line discipline.
      */
     ldisc = ldisc_create(conf, term, backend, &wgs.seat);
-
+#if 0
     /*
      * Destroy the Restart Session menu item. (This will return
      * failure if it's already absent, as it will be the very first
@@ -527,7 +525,7 @@ static void start_backend(void)
     for (i = 0; i < lenof(popup_menus); i++) {
         DeleteMenu(popup_menus[i].menu, IDM_RESTART, MF_BYCOMMAND);
     }
-
+#endif 
     session_closed = false;
 }
 
@@ -552,7 +550,7 @@ static void close_session(void *ignored_context)
         term_provide_backend(term, NULL);
         seat_update_specials_menu(&wgs.seat);
     }
-
+#if 0
     /*
      * Show the Restart Session menu item. Do a precautionary
      * delete first to ensure we never end up with more than one.
@@ -562,6 +560,7 @@ static void close_session(void *ignored_context)
         InsertMenu(popup_menus[i].menu, IDM_DUPSESS, MF_BYCOMMAND | MF_ENABLED,
                    IDM_RESTART, "&Restart Session");
     }
+#endif 
 }
 
 /*
@@ -573,7 +572,7 @@ static void close_session(void *ignored_context)
  * SetWindowText so that if we're not in Unicode mode we first convert
  * the wide string we're given.
  */
-static bool unicode_window;
+static bool unicode_window = true;
 static BOOL (WINAPI *sw_PeekMessage)(LPMSG, HWND, UINT, UINT, UINT);
 static LRESULT (WINAPI *sw_DispatchMessage)(const MSG *);
 static LRESULT (WINAPI *sw_DefWindowProc)(HWND, UINT, WPARAM, LPARAM);
@@ -1123,8 +1122,11 @@ void cleanup_exit(int code)
     /*
      * Clean up.
      */
+
     deinit_fonts();
-    sfree(logpal);
+    if(logpal)
+        sfree(logpal);
+
     if (pal)
         DeleteObject(pal);
 #if 0
@@ -1133,11 +1135,11 @@ void cleanup_exit(int code)
     random_save_seed();
     shutdown_help();
 
-    cleanup_term_list();
-
     if (code)
         PostQuitMessage(code);
+
 #if 0
+    MessageBoxA(NULL, "QUIT", "x", MB_OK);
     /* Clean up COM. */
     CoUninitialize();
 
@@ -1150,6 +1152,7 @@ void cleanup_exit(int code)
  */
 static void update_savedsess_menu(void)
 {
+#if 0
     int i;
     while (DeleteMenu(savedsess_menu, 0, MF_BYPOSITION)) ;
     /* skip sesslist.sessions[0] == Default Settings */
@@ -1162,6 +1165,7 @@ static void update_savedsess_menu(void)
                    sesslist.sessions[i]);
     if (sesslist.nsessions <= 1)
         AppendMenu(savedsess_menu, MF_GRAYED, IDM_SAVED_MIN, "(No sessions)");
+#endif
 }
 
 /*
@@ -1169,6 +1173,7 @@ static void update_savedsess_menu(void)
  */
 static void win_seat_update_specials_menu(Seat *seat)
 {
+#if 0
     HMENU new_menu;
     int i, j;
 
@@ -1233,6 +1238,7 @@ static void win_seat_update_specials_menu(Seat *seat)
         }
     }
     specials_menu = new_menu;
+#endif 
 }
 
 static void update_mouse_pointer(void)
@@ -1295,6 +1301,7 @@ static void wintw_set_raw_mouse_mode_pointer(TermWin *tw, bool activate)
  */
 static void win_seat_connection_fatal(Seat *seat, const char *msg)
 {
+#if 0
     char *title = dupprintf("%s Fatal Error", appname);
     show_mouseptr(true);
     MessageBox(wgs.term_hwnd, msg, title, MB_ICONERROR | MB_OK);
@@ -1305,6 +1312,7 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
     else {
         queue_toplevel_callback(close_session, NULL);
     }
+#endif 
 }
 
 /*
@@ -1312,6 +1320,7 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
  */
 void cmdline_error(const char *fmt, ...)
 {
+#if 0
     va_list ap;
     char *message, *title;
 
@@ -1323,6 +1332,7 @@ void cmdline_error(const char *fmt, ...)
     sfree(message);
     sfree(title);
     exit(1);
+#endif 
 }
 
 static inline rgb rgb_from_colorref(COLORREF cr)
@@ -1693,13 +1703,14 @@ static void init_fonts(int pick_width, int pick_height)
 
     ReleaseDC(wgs.term_hwnd, hdc);
 
+#if 0
     if (trust_icon != INVALID_HANDLE_VALUE) {
         DestroyIcon(trust_icon);
     }
     trust_icon = LoadImage(hinst, MAKEINTRESOURCE(IDI_MAINICON),
                            IMAGE_ICON, font_width*2, font_height,
                            LR_DEFAULTCOLOR);
-
+#endif 
     if (fontsize[FONT_UNDERLINE] != fontsize[FONT_NORMAL]) {
         und_mode = UND_LINE;
         DeleteObject(fonts[FONT_UNDERLINE]);
@@ -1783,10 +1794,12 @@ static void deinit_fonts(void)
         fontflag[i] = false;
     }
 
+#if 0
     if (trust_icon != INVALID_HANDLE_VALUE) {
         DestroyIcon(trust_icon);
     }
     trust_icon = INVALID_HANDLE_VALUE;
+#endif 
 }
 
 static void wintw_request_resize(TermWin *tw, int w, int h)
@@ -2383,7 +2396,6 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
         show_mouseptr(true);
         PostQuitMessage(0);
         return 0;
-#endif 
       case WM_INITMENUPOPUP:
         if ((HMENU)wParam == savedsess_menu) {
             /* About to pop up Saved Sessions sub-menu.
@@ -2394,6 +2406,7 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
             return 0;
         }
         break;
+#endif 
       case WM_COMMAND:
       case WM_SYSCOMMAND:
         switch (wParam & ~0xF) {       /* low 4 bits reserved to Windows */
@@ -2764,6 +2777,7 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
       case WM_LBUTTONUP:
       case WM_MBUTTONUP:
       case WM_RBUTTONUP:
+#if 0
         if (message == WM_RBUTTONDOWN &&
             ((wParam & MK_CONTROL) ||
              (conf_get_int(conf, CONF_mouse_is_xterm) == 2))) {
@@ -2780,6 +2794,7 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
                            0, hwnd, NULL);
             break;
         }
+#endif 
         {
             int button;
             bool press;
@@ -3547,7 +3562,7 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
                         term, (unsigned short *)(buff+i), 1);
                 }
             }
-            free(buff);
+            safefree(buff);
         }
         ImmReleaseContext(hwnd, hIMC);
         return 1;
@@ -4254,6 +4269,7 @@ static void wintw_draw_cursor(
 
 static void wintw_draw_trust_sigil(TermWin *tw, int x, int y)
 {
+#if 0
     x *= font_width;
     y *= font_height;
     x += offset_width;
@@ -4261,6 +4277,7 @@ static void wintw_draw_trust_sigil(TermWin *tw, int x, int y)
 
     DrawIconEx(wintw_hdc, x, y, trust_icon, font_width * 2, font_height,
                0, NULL, DI_NORMAL);
+#endif 
 }
 
 /* This function gets the actual width of a character in the normal font.
@@ -5758,6 +5775,7 @@ static void flash_window_timer(void *ctx, unsigned long now)
  */
 static void flash_window(int mode)
 {
+#if 0
     int beep_ind = conf_get_int(conf, CONF_beep_ind);
     if ((mode == 0) || (beep_ind == B_IND_DISABLED)) {
         /* stop */
@@ -5799,6 +5817,7 @@ static void flash_window(int mode)
                                         wgs.term_hwnd);
         }
     }
+#endif 
 }
 
 /*
@@ -5871,6 +5890,7 @@ static void wintw_bell(TermWin *tw, int mode)
  */
 static void wintw_set_minimised(TermWin *tw, bool minimised)
 {
+#if 0
     if (IsIconic(wgs.term_hwnd)) {
         if (!minimised)
             ShowWindow(wgs.term_hwnd, SW_RESTORE);
@@ -5878,6 +5898,7 @@ static void wintw_set_minimised(TermWin *tw, bool minimised)
         if (minimised)
             ShowWindow(wgs.term_hwnd, SW_MINIMIZE);
     }
+#endif 
 }
 
 /*
@@ -5885,6 +5906,7 @@ static void wintw_set_minimised(TermWin *tw, bool minimised)
  */
 static void wintw_move(TermWin *tw, int x, int y)
 {
+#if 0
     int resize_action = conf_get_int(conf, CONF_resize_action);
     if (resize_action == RESIZE_DISABLED ||
         resize_action == RESIZE_FONT ||
@@ -5892,6 +5914,7 @@ static void wintw_move(TermWin *tw, int x, int y)
         return;
 
     SetWindowPos(wgs.term_hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+#endif 
 }
 
 /*
@@ -5900,10 +5923,12 @@ static void wintw_move(TermWin *tw, int x, int y)
  */
 static void wintw_set_zorder(TermWin *tw, bool top)
 {
+#if 0
     if (conf_get_bool(conf, CONF_alwaysontop))
         return;                        /* ignore */
     SetWindowPos(wgs.term_hwnd, top ? HWND_TOP : HWND_BOTTOM, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE);
+#endif 
 }
 
 /*
@@ -5920,6 +5945,7 @@ static void wintw_refresh(TermWin *tw)
  */
 static void wintw_set_maximised(TermWin *tw, bool maximised)
 {
+#if 0
     if (IsZoomed(wgs.term_hwnd)) {
         if (!maximised)
             ShowWindow(wgs.term_hwnd, SW_RESTORE);
@@ -5927,6 +5953,7 @@ static void wintw_set_maximised(TermWin *tw, bool maximised)
         if (maximised)
             ShowWindow(wgs.term_hwnd, SW_MAXIMIZE);
     }
+#endif 
 }
 
 /*
@@ -5934,11 +5961,14 @@ static void wintw_set_maximised(TermWin *tw, bool maximised)
  */
 static bool is_full_screen()
 {
+#if 0
     if (!IsZoomed(wgs.term_hwnd))
         return false;
     if (GetWindowLongPtr(wgs.term_hwnd, GWL_STYLE) & WS_CAPTION)
         return false;
     return true;
+#endif
+    return false;
 }
 
 /* Get the rect/size of a full screen window using the nearest available
@@ -5974,6 +6004,7 @@ static bool get_fullscreen_rect(RECT *ss)
  */
 static void make_full_screen()
 {
+#if 0
     DWORD style;
     RECT ss;
 
@@ -6006,6 +6037,7 @@ static void make_full_screen()
         for (i = 0; i < lenof(popup_menus); i++)
             CheckMenuItem(popup_menus[i].menu, IDM_FULLSCREEN, MF_CHECKED);
     }
+#endif 
 }
 
 /*
@@ -6113,6 +6145,9 @@ static bool win_seat_get_window_pixel_size(Seat *seat, int *x, int *y)
 /***********************************************************************************/
 int PuTTY_Init(HINSTANCE hInstance)
 {
+    bool bmem = mempool_init();
+    assert(bmem);
+
     wgs.term_hwnd = NULL;
 
     hinst = hInstance;
@@ -6180,7 +6215,22 @@ int PuTTY_Init(HINSTANCE hInstance)
 
 int PuTTY_Term()
 {
-    cleanup_exit(0);
+    deinit_fonts();
+
+    if (logpal)
+        sfree(logpal);
+
+    if (pal)
+        DeleteObject(pal);
+
+    random_save_seed();
+
+    shutdown_help();
+
+    cleanup_term_list();
+    
+    mempool_term();
+
     return 0;
 }
 
@@ -6260,6 +6310,7 @@ int PuTTY_AttachWindow(HWND hWnd, HWND hWndParent, int heightTab)
      */
     wintw->vt = &windows_termwin_vt;
     term = term_init(conf, &ucsdata, wintw);
+    term->term_status = TERM_SHOWING;
     term_curr->term = term;
 
     setup_clipboards(term, conf);

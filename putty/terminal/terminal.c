@@ -1481,62 +1481,77 @@ void term_update(Terminal *term)
 {
     term->window_update_pending = false;
 
-    if (term->win_move_pending) {
-        win_move(term->win, term->win_move_pending_x,
-                 term->win_move_pending_y);
-        term->win_move_pending = false;
-    }
-    if (term->win_resize_pending == WIN_RESIZE_NEED_SEND) {
-        term->win_resize_pending = WIN_RESIZE_AWAIT_REPLY;
-        win_request_resize(term->win, term->win_resize_pending_w,
-                           term->win_resize_pending_h);
-    }
-    if (term->win_zorder_pending) {
-        win_set_zorder(term->win, term->win_zorder_top);
-        term->win_zorder_pending = false;
-    }
-    if (term->win_minimise_pending) {
-        win_set_minimised(term->win, term->win_minimise_enable);
-        term->win_minimise_pending = false;
-    }
-    if (term->win_maximise_pending) {
-        win_set_maximised(term->win, term->win_maximise_enable);
-        term->win_maximise_pending = false;
-    }
-    if (term->win_title_pending) {
-        win_set_title(term->win, term->window_title,
-                      term->wintitle_codepage);
-        term->win_title_pending = false;
-    }
-    if (term->win_icon_title_pending) {
-        win_set_icon_title(term->win, term->icon_title,
-                           term->icontitle_codepage);
-        term->win_icon_title_pending = false;
-    }
-    if (term->win_pointer_shape_pending) {
-        win_set_raw_mouse_mode_pointer(term->win, term->win_pointer_shape_raw);
-        term->win_pointer_shape_pending = false;
-    }
-    if (term->win_refresh_pending) {
-        win_refresh(term->win);
-        term->win_refresh_pending = false;
-    }
-    if (term->win_palette_pending) {
-        unsigned start = term->win_palette_pending_min;
-        unsigned ncolours = term->win_palette_pending_limit - start;
-        win_palette_set(term->win, start, ncolours, term->palette + start);
-        term->win_palette_pending = false;
-    }
-
-    if (win_setup_draw_ctx(term->win)) {
-        if (term->win_scrollbar_update_pending) {
-            term->win_scrollbar_update_pending = false;
-            update_sbar(term);
+    if (term->term_status & TERM_SHOWING)
+    {
+        if (term->win_move_pending) {
+            win_move(term->win, term->win_move_pending_x,
+                term->win_move_pending_y);
+            term->win_move_pending = false;
         }
-        do_paint(term);
-        win_set_cursor_pos(
-            term->win, term->curs.x, term->curs.y - term->disptop);
-        win_free_draw_ctx(term->win);
+        if (term->win_resize_pending == WIN_RESIZE_NEED_SEND) {
+            term->win_resize_pending = WIN_RESIZE_AWAIT_REPLY;
+            win_request_resize(term->win, term->win_resize_pending_w,
+                term->win_resize_pending_h);
+        }
+        if (term->win_zorder_pending) {
+            win_set_zorder(term->win, term->win_zorder_top);
+            term->win_zorder_pending = false;
+        }
+        if (term->win_minimise_pending) {
+            win_set_minimised(term->win, term->win_minimise_enable);
+            term->win_minimise_pending = false;
+        }
+        if (term->win_maximise_pending) {
+            win_set_maximised(term->win, term->win_maximise_enable);
+            term->win_maximise_pending = false;
+        }
+        if (term->win_title_pending) {
+            win_set_title(term->win, term->window_title,
+                term->wintitle_codepage);
+            term->win_title_pending = false;
+        }
+        if (term->win_icon_title_pending) {
+            win_set_icon_title(term->win, term->icon_title,
+                term->icontitle_codepage);
+            term->win_icon_title_pending = false;
+        }
+        if (term->win_pointer_shape_pending) {
+            win_set_raw_mouse_mode_pointer(term->win, term->win_pointer_shape_raw);
+            term->win_pointer_shape_pending = false;
+        }
+        if (term->win_refresh_pending) {
+            win_refresh(term->win);
+            term->win_refresh_pending = false;
+        }
+        if (term->win_palette_pending) {
+            unsigned start = term->win_palette_pending_min;
+            unsigned ncolours = term->win_palette_pending_limit - start;
+            win_palette_set(term->win, start, ncolours, term->palette + start);
+            term->win_palette_pending = false;
+        }
+
+        if (win_setup_draw_ctx(term->win)) {
+            if (term->win_scrollbar_update_pending) {
+                term->win_scrollbar_update_pending = false;
+                update_sbar(term);
+            }
+            do_paint(term);
+            win_set_cursor_pos(
+                term->win, term->curs.x, term->curs.y - term->disptop);
+            win_free_draw_ctx(term->win);
+        }
+    }
+    else
+    {
+        term->win_move_pending = false;
+        term->win_zorder_pending = false;
+        term->win_minimise_pending = false;
+        term->win_maximise_pending = false;
+        term->win_title_pending = false;
+        term->win_icon_title_pending = false;
+        term->win_refresh_pending = false;
+        term->win_palette_pending = false;
+        term->win_scrollbar_update_pending = false;
     }
 }
 
@@ -2019,6 +2034,7 @@ Terminal *term_init(Conf *myconf, struct unicode_data *ucsdata, TermWin *win)
      * that need it.
      */
     term = snew(Terminal);
+    memset(term, 0, sizeof(Terminal));
     term->win = win;
     term->ucsdata = ucsdata;
     term->conf = conf_copy(myconf);
