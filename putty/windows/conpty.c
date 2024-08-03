@@ -60,10 +60,12 @@ static void conpty_terminate(ConPTY *conpty)
         handle_free(conpty->in);
         conpty->in = NULL;
     }
+#if 0
     if (conpty->inpipe != INVALID_HANDLE_VALUE) {
         CloseHandle(conpty->inpipe);
         conpty->inpipe = INVALID_HANDLE_VALUE;
     }
+#endif 
     if (conpty->subprocess) {
         delete_handle_wait(conpty->subprocess);
         conpty->subprocess = NULL;

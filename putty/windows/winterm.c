@@ -35,6 +35,107 @@
 #include <richedit.h>
 #include <mmsystem.h>
 
+// new variables
+/////////////////////////////////////////////////////////
+bool  terminal_has_focus = false;
+
+static int prev_client_width = 0;
+static int prev_client_height = 0;
+static HWND hWndMain = NULL;  // the handle of the main window
+// static char* shellcmd = NULL;
+static int term_row, term_col, term_savelines;
+
+/////////////////////////////////////////////////////////////
+typedef struct TermList TermList;
+struct TermList
+{
+    TermList* next;
+    TermList* prev;
+    uint64_t  state;
+    Conf* conf;
+    Terminal* term;
+    LogContext* logctx;
+    Backend* backend;
+    Ldisc* ldisc;
+};
+
+static TermList* term_head = NULL;
+static TermList* term_tail = NULL;
+static TermList* term_curr = NULL;
+
+static void free_term_list(TermList* tl)
+{
+    assert(tl);
+
+    if (tl->ldisc)
+        ldisc_free(tl->ldisc);
+
+    if (tl->backend)
+    {
+        backend_free(tl->backend);
+        term_provide_backend(tl->term, NULL);
+    }
+
+    if (tl->term)
+        term_free(tl->term);
+    if (tl->logctx)
+        log_free(tl->logctx);
+
+    if (tl->conf)
+        conf_free(tl->conf);
+
+    sfree(tl);
+}
+
+static void cleanup_term_list(void)
+{
+    TermList* tl = term_head;
+    TermList* next;
+
+    while (tl)
+    {
+        next = tl->next;
+        free_term_list(tl);
+        tl = next;
+    }
+}
+/////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////
+const char* const appname = "iTerm";
+/*
+ * Define the default protocol for the application. This is always a
+ * network backend (serial ports come second behind network, in every
+ * case). Applications that don't have either (such as pterm) don't
+ * need this variable anyway, so just set it to -1.
+ */
+const int be_default_protocol = -1;
+
+/*
+ * List all the configured backends, in the order they should appear
+ * in the config box.
+ */
+const struct BackendVtable* const backends[] = { NULL };
+
+/*
+ * Number of backends at the start of the above list that should have
+ * radio buttons in the config UI.
+ *
+ * The rule is: the most-preferred network backend, and Serial, each
+ * get a radio button if present.
+ *
+ * The rest will be relegated to a dropdown list.
+ */
+const size_t n_ui_backends = 0;
+
+//- HELP.C///////////////////////////////////////////////////////////////////////////////////////////////////
+bool has_help(void) { return false; }
+void init_help(void) {}
+void shutdown_help(void) {}
+void launch_help(HWND hwnd, const char* topic) {}
+void quit_help(HWND hwnd) {}
+int has_embedded_chm(void) { return 0; }
+
 /* From MSDN: In the WM_SYSCOMMAND message, the four low-order bits of
  * wParam are used by Windows, and should be masked off, so we shouldn't
  * attempt to store information in them. Hence all these identifiers have
@@ -100,7 +201,6 @@
 
 static Mouse_Button translate_button(Mouse_Button button);
 static void show_mouseptr(bool show);
-static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM, bool* bHandled);
 static int TranslateKey(UINT message, WPARAM wParam, LPARAM lParam,
                         unsigned char *output);
 static void init_palette(void);
@@ -477,6 +577,7 @@ static bool unicode_window;
 static BOOL (WINAPI *sw_PeekMessage)(LPMSG, HWND, UINT, UINT, UINT);
 static LRESULT (WINAPI *sw_DispatchMessage)(const MSG *);
 static LRESULT (WINAPI *sw_DefWindowProc)(HWND, UINT, WPARAM, LPARAM);
+#if 0
 static void sw_SetWindowText(HWND hwnd, wchar_t *text)
 {
     if (unicode_window) {
@@ -488,7 +589,6 @@ static void sw_SetWindowText(HWND hwnd, wchar_t *text)
     }
 }
 
-#if 0
 static HINSTANCE hprev;
 
 /*
@@ -1027,15 +1127,22 @@ void cleanup_exit(int code)
     sfree(logpal);
     if (pal)
         DeleteObject(pal);
+#if 0
     sk_cleanup();
-
+#endif 
     random_save_seed();
     shutdown_help();
 
+    cleanup_term_list();
+
+    if (code)
+        PostQuitMessage(code);
+#if 0
     /* Clean up COM. */
     CoUninitialize();
 
     exit(code);
+#endif 
 }
 
 /*
@@ -2162,8 +2269,39 @@ static void free_hdc(HDC hdc)
 
 static bool need_backend_resize = false;
 
-static void wm_size_resize_term(LPARAM lParam, bool border)
+static void wm_size_resize_term(int width, int height, bool border)
 {
+    int w = (width - offset_width * 2) / font_width;
+    int h = (height - offset_height * 2) / font_height;
+
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
+    conf_set_int(conf, CONF_height, h);
+    conf_set_int(conf, CONF_width, w);
+
+    if (resizing) {
+        /*
+         * If we're in the middle of an interactive resize, we don't
+         * call term_size. This means that, firstly, the user can drag
+         * the size back and forth indecisively without wiping out any
+         * actual terminal contents, and secondly, the Terminal
+         * doesn't call back->size in turn for each increment of the
+         * resizing drag, so we don't spam the server with huge
+         * numbers of resize events.
+         */
+        need_backend_resize = true;
+#if 0
+        conf_set_int(conf, CONF_height, h);
+        conf_set_int(conf, CONF_width, w);
+#endif 
+    }
+    else
+    {
+        term_size(term, h, w, conf_get_int(conf, CONF_savelines));
+    }
+
+#if 0
     int width = LOWORD(lParam);
     int height = HIWORD(lParam);
     int border_size = border ? conf_get_int(conf, CONF_window_border) : 0;
@@ -2191,10 +2329,10 @@ static void wm_size_resize_term(LPARAM lParam, bool border)
         term_size(term, h, w,
                   conf_get_int(conf, CONF_savelines));
     }
+#endif 
 }
 
-static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
-                                WPARAM wParam, LPARAM lParam, bool* bHandled)
+LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOOL* bHandled)
 {
     HDC hdc;
     static bool ignore_clip = false;
@@ -2205,6 +2343,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
     int resize_action;
 
     switch (message) {
+    case WM_ERASEBKGND:
+        return 1;
       case WM_TIMER:
         if ((UINT_PTR)wParam == TIMING_TIMER_ID) {
             unsigned long next;
@@ -2216,6 +2356,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             }
         }
         return 0;
+#if 0
       case WM_CREATE:
         break;
       case WM_CLOSE: {
@@ -2242,6 +2383,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         show_mouseptr(true);
         PostQuitMessage(0);
         return 0;
+#endif 
       case WM_INITMENUPOPUP:
         if ((HMENU)wParam == savedsess_menu) {
             /* About to pop up Saved Sessions sub-menu.
@@ -2271,6 +2413,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 return result;
             }
             break;
+#if 0
           case IDM_SHOWLOG:
             showeventlog(hwnd);
             break;
@@ -2566,6 +2709,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           case IDM_HELP:
             launch_help(hwnd, NULL);
             break;
+#endif 
           case SC_MOUSEMENU:
             /*
              * We get this if the System menu has been activated
@@ -2896,20 +3040,29 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         winselgui_response(wParam, lParam);
         return 0;
       case WM_SETFOCUS:
-        term_set_focus(term, true);
-        CreateCaret(hwnd, caretbm, font_width, font_height);
-        ShowCaret(hwnd);
-        flash_window(0);               /* stop */
-        compose_state = 0;
-        term_update(term);
+          if (term)
+          {
+              terminal_has_focus = true;
+              term_set_focus(term, true);
+              CreateCaret(hwnd, caretbm, font_width, font_height);
+              ShowCaret(hwnd);
+              flash_window(0);               /* stop */
+              compose_state = 0;
+              term_update(term);
+          }
         break;
       case WM_KILLFOCUS:
-        show_mouseptr(true);
-        term_set_focus(term, false);
-        DestroyCaret();
-        caret_x = caret_y = -1;        /* ensure caret is replaced next time */
-        term_update(term);
+          if (term)
+          {
+              terminal_has_focus = false;
+              show_mouseptr(true);
+              term_set_focus(term, false);
+              DestroyCaret();
+              caret_x = caret_y = -1;        /* ensure caret is replaced next time */
+              term_update(term);
+          }
         break;
+#if 0
       case WM_ENTERSIZEMOVE:
 #ifdef RDB_DEBUG_PATCH
         debug("WM_ENTERSIZEMOVE\n");
@@ -3025,14 +3178,54 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             return rv;
         }
         /* break;  (never reached) */
+#endif 
       case WM_FULLSCR_ON_MAX:
         fullscr_on_max = true;
         break;
       case WM_MOVE:
-        term_notify_window_pos(term, LOWORD(lParam), HIWORD(lParam));
-        sys_cursor_update();
+          if (term)
+          {
+              term_notify_window_pos(term, LOWORD(lParam), HIWORD(lParam));
+              sys_cursor_update();
+          }
         break;
       case WM_SIZE:
+          if (term && !resizing)
+          {
+              int cw, ch;
+              RECT rc = { 0 };
+
+              GetClientRect(hwnd, &rc);
+              cw = rc.right - rc.left;
+              ch = rc.bottom - rc.top;
+
+              if (prev_client_width == cw && prev_client_height == ch)
+              {
+                  InvalidateRect(hwnd, NULL, true);
+                  return 0; // the size is not changing, do nothing
+              }
+              else
+              {
+                  prev_client_width = cw;
+                  prev_client_height = ch;
+
+                  term_notify_minimised(term, wParam == SIZE_MINIMIZED);
+
+                  GetWindowRect(hwnd, &rc);
+                  cw = rc.right - rc.left;
+                  ch = rc.bottom - rc.top;
+                  term_notify_window_size_pixels(term, cw, ch);
+
+                  wm_size_resize_term(LOWORD(lParam), HIWORD(lParam), true);
+
+                  sys_cursor_update();
+
+                  InvalidateRect(hwnd, NULL, true);
+              }
+              PostMessage(hWndMain, WM_PUTTY_NOTIFY, term->rows, term->cols);
+          }
+          return 0;
+#if 0
         resize_action = conf_get_int(conf, CONF_resize_action);
 #ifdef RDB_DEBUG_PATCH
         debug("WM_SIZE %s (%d,%d)\n",
@@ -3139,6 +3332,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         sys_cursor_update();
         return 0;
+#endif 
       case WM_DPICHANGED:
         dpi_info.cur_dpi.x = LOWORD(wParam);
         dpi_info.cur_dpi.y = HIWORD(wParam);
@@ -3471,11 +3665,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
     }
 
+    *bHandled = FALSE;
+    return 0;
+#if 0
     /*
      * Any messages we don't process completely above are passed through to
      * DefWindowProc() for default processing.
      */
     return sw_DefWindowProc(hwnd, message, wParam, lParam);
+#endif
 }
 
 /*
@@ -4831,6 +5029,7 @@ static int TranslateKey(UINT message, WPARAM wParam, LPARAM lParam,
 
 static void wintw_set_title(TermWin *tw, const char *title, int codepage)
 {
+#if 0
     wchar_t *new_window_name = dup_mb_to_wc(codepage, 0, title);
     if (!wcscmp(new_window_name, window_name)) {
         sfree(new_window_name);
@@ -4840,10 +5039,12 @@ static void wintw_set_title(TermWin *tw, const char *title, int codepage)
     window_name = new_window_name;
     if (conf_get_bool(conf, CONF_win_name_always) || !IsIconic(wgs.term_hwnd))
         sw_SetWindowText(wgs.term_hwnd, window_name);
+#endif 
 }
 
 static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
 {
+#if 0
     wchar_t *new_icon_name = dup_mb_to_wc(codepage, 0, title);
     if (!wcscmp(new_icon_name, icon_name)) {
         sfree(new_icon_name);
@@ -4853,6 +5054,7 @@ static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
     icon_name = new_icon_name;
     if (!conf_get_bool(conf, CONF_win_name_always) && IsIconic(wgs.term_hwnd))
         sw_SetWindowText(wgs.term_hwnd, icon_name);
+#endif 
 }
 
 static void wintw_set_scrollbar(TermWin *tw, int total, int start, int page)
@@ -5811,6 +6013,7 @@ static void make_full_screen()
  */
 static void clear_full_screen()
 {
+#if 0
     DWORD oldstyle, style;
 
     /* Reinstate the window furniture. */
@@ -5837,6 +6040,7 @@ static void clear_full_screen()
         for (i = 0; i < lenof(popup_menus); i++)
             CheckMenuItem(popup_menus[i].menu, IDM_FULLSCREEN, MF_UNCHECKED);
     }
+#endif 
 }
 
 /*
@@ -5844,6 +6048,7 @@ static void clear_full_screen()
  */
 static void flip_full_screen()
 {
+#if 0
     if (is_full_screen()) {
         ShowWindow(wgs.term_hwnd, SW_RESTORE);
     } else if (IsZoomed(wgs.term_hwnd)) {
@@ -5852,6 +6057,7 @@ static void flip_full_screen()
         SendMessage(wgs.term_hwnd, WM_FULLSCR_ON_MAX, 0, 0);
         ShowWindow(wgs.term_hwnd, SW_MAXIMIZE);
     }
+#endif 
 }
 
 static size_t win_seat_output(Seat *seat, SeatOutputType type,
@@ -5903,4 +6109,292 @@ static bool win_seat_get_window_pixel_size(Seat *seat, int *x, int *y)
     *x = r.right - r.left;
     *y = r.bottom - r.top;
     return true;
+}
+/***********************************************************************************/
+int PuTTY_Init(HINSTANCE hInstance)
+{
+    wgs.term_hwnd = NULL;
+
+    hinst = hInstance;
+    unicode_window = true;
+    sw_DefWindowProc = DefWindowProcW;
+    sw_PeekMessage = PeekMessageW;
+    sw_DispatchMessage = DispatchMessageW;
+
+    term_head = snew(TermList);
+    memset(term_head, 0, sizeof(TermList));
+    term_curr = term_tail = term_head;
+
+    dll_hijacking_protection();
+
+    /* Set Explicit App User Model Id so that jump lists don't cause
+       PuTTY to hang on to removable media. */
+
+    set_explicit_app_user_model_id();
+
+    /* Ensure a Maximize setting in Explorer doesn't maximise the
+     * config box. */
+    defuse_showwindow();
+
+    init_winver();
+
+    /*
+     * If we're running a version of Windows that doesn't support
+     * WM_MOUSEWHEEL, find out what message number we should be
+     * using instead.
+     */
+    if (osMajorVersion < 4 || (osMajorVersion == 4 && osPlatformId != VER_PLATFORM_WIN32_NT))
+        wm_mousewheel = RegisterWindowMessage("MSWHEEL_ROLLMSG");
+
+    init_help();
+
+    init_winfuncs();
+
+    conf = conf_new();
+    assert(term_curr);
+    term_curr->conf = conf;
+
+    /*
+     * Process the command line.
+     */
+    gui_term_process_cmdline(conf, "");
+
+    memset(&ucsdata, 0, sizeof(ucsdata));
+
+    conf_cache_data();
+
+    /*
+     * Guess some defaults for the window size. This all gets
+     * updated later, so we don't really care too much. However, we
+     * do want the font width/height guesses to correspond to a
+     * large font rather than a small one...
+     */
+
+    font_width = 10;
+    font_height = 20;
+    extra_width = 25;
+    extra_height = 28;
+
+    return 0;
+}
+
+int PuTTY_Term()
+{
+    cleanup_exit(0);
+    return 0;
+}
+
+
+int PuTTY_MessageLoop(BOOL bHasMessage, MSG* pMSG)
+{
+    int n;
+    DWORD timeout;
+    HandleWaitList* hwl;
+
+    timeout = 0;
+    if (bHasMessage == FALSE && !toplevel_callback_pending())
+    {
+        timeout = INFINITE;
+        /* The messages seem unreliable; especially if we're being tricky */
+        term_set_focus(term, terminal_has_focus);
+    }
+
+    hwl = get_handle_wait_list();
+
+    n = MsgWaitForMultipleObjects(hwl->nhandles, hwl->handles, false, timeout, QS_ALLINPUT);
+
+    if ((unsigned)(n - WAIT_OBJECT_0) < (unsigned)hwl->nhandles)
+    {
+        handle_wait_activate(hwl, n - WAIT_OBJECT_0);
+    }
+
+    handle_wait_list_free(hwl);
+
+    while (sw_PeekMessage(pMSG, NULL, 0, 0, PM_REMOVE))
+    {
+        if (pMSG->message != WM_QUIT)
+        {
+            if (pMSG->hwnd != wgs.term_hwnd)
+            {
+                TranslateMessage(pMSG);
+            }
+
+            sw_DispatchMessage(pMSG);
+
+            if (pMSG->message != WM_NETEVENT)
+                break;
+        }
+        else return 0;
+    }
+
+    run_toplevel_callbacks();
+
+    return 0;
+}
+
+int PuTTY_AttachWindow(HWND hWnd, HWND hWndParent, int heightTab)
+{
+    // record both the PuTTY window(child window) and the main window
+    wgs.term_hwnd = hWnd;
+    hWndMain = hWndParent;
+
+    memset(&dpi_info, 0, sizeof(struct _dpi_info));
+    init_dpi_info();
+
+    /*
+     * Initialise the fonts, simultaneously correcting the guesses
+     * for font_{width,height}.
+     */
+    init_fonts(0, 0);
+
+    /*
+     * Prepare a logical palette.
+     */
+    init_palette();
+
+    /*
+     * Initialise the terminal. (We have to do this _after_
+     * creating the window, since the terminal is the first thing
+     * which will call schedule_timer(), which will in turn call
+     * timer_change_notify() which will expect hwnd to exist.)
+     */
+    wintw->vt = &windows_termwin_vt;
+    term = term_init(conf, &ucsdata, wintw);
+    term_curr->term = term;
+
+    setup_clipboards(term, conf);
+    logctx = log_init(&wgs.logpolicy, conf);
+    term_curr->logctx = logctx;
+
+    term_provide_logctx(term, logctx);
+
+    term_row = conf_get_int(conf, CONF_height);
+    term_col = conf_get_int(conf, CONF_width);
+    term_savelines = conf_get_int(conf, CONF_savelines);
+
+    term_size(term, term_row, term_col, term_savelines);
+
+    offset_width = offset_height = conf_get_int(conf, CONF_window_border);
+    
+    {
+        DWORD dwStyle, dwExStyle;
+        RECT rect = { 0 };
+
+        rect.left = rect.top = 0;
+        // add the width of the vertical bar
+        rect.right = term_col * font_width + (offset_width << 1) + GetSystemMetrics(SM_CXVSCROLL);
+        // add the tab window height
+        rect.bottom = term_row * font_height + (offset_height << 1) + heightTab;
+
+        dwStyle = (DWORD)GetWindowLong(hWndMain, GWL_STYLE);
+        dwExStyle = (DWORD)GetWindowLong(hWndMain, GWL_EXSTYLE);
+        if (AdjustWindowRectEx(&rect, dwStyle, FALSE, dwExStyle))
+        {
+            SetWindowPos(hWndMain, NULL, 0, 0,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
+        }
+    }
+
+    /*
+     * Set up a caret bitmap, with no content.
+     */
+    {
+        char* bits;
+        int size = (font_width + 15) / 16 * 2 * font_height;
+        bits = snewn(size, char);
+        memset(bits, 0, size);
+        caretbm = CreateBitmap(font_width, font_height, 1, 1, bits);
+        sfree(bits);
+    }
+    CreateCaret(wgs.term_hwnd, caretbm, font_width, font_height);
+
+    /*
+     * Initialise the scroll bar.
+     */
+    {
+        SCROLLINFO si;
+
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+        si.nMin = 0;
+        si.nMax = term->rows - 1;
+        si.nPage = term->rows;
+        si.nPos = 0;
+        SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
+    }
+
+    /*
+     * Prepare the mouse handler.
+     */
+    lastact = MA_NOTHING;
+    lastbtn = MBT_NOTHING;
+    dbltime = GetDoubleClickTime();
+
+    if (restricted_acl()) {
+        lp_eventlog(&wgs.logpolicy, "Running with restricted process ACL");
+    }
+
+    winselgui_set_hwnd(wgs.term_hwnd);
+    start_backend();
+    term_curr->backend = backend;
+    term_curr->ldisc = ldisc;
+
+    /*
+     * Set up the initial input locale.
+     */
+    set_input_locale(GetKeyboardLayout(0));
+
+    /*
+     * Finally show the window!
+     */
+    ShowWindow(hWndMain, SW_SHOW);
+    SetForegroundWindow(hWndMain);
+
+    term_set_focus(term, GetForegroundWindow() == hWndMain);
+    UpdateWindow(hWndMain);
+
+    gui_terminal_ready(wgs.term_hwnd, &wgs.seat, backend);
+
+    return 0;
+}
+
+
+void PuTTY_EnterSizing(void)
+{
+    resizing = true;
+    need_backend_resize = false;
+}
+
+void PuTTY_ExitSizing(void)
+{
+    int cw, ch;
+    RECT rc = { 0 };
+
+    resizing = false;
+
+    GetClientRect(wgs.term_hwnd, &rc);
+    cw = rc.right - rc.left;
+    ch = rc.bottom - rc.top;
+
+    if (prev_client_width != cw || prev_client_height != ch)
+    {
+        prev_client_width = cw;
+        prev_client_height = ch;
+
+        term_notify_minimised(term, false);
+
+        GetWindowRect(wgs.term_hwnd, &rc);
+        cw = rc.right - rc.left;
+        ch = rc.bottom - rc.top;
+        term_notify_window_size_pixels(term, cw, ch);
+
+        wm_size_resize_term(prev_client_width, prev_client_height, true);
+        sys_cursor_update();
+        //reset_window(0);
+    }
+    InvalidateRect(wgs.term_hwnd, NULL, true);
+
+    PostMessage(hWndMain, WM_PUTTY_NOTIFY, term->rows, term->cols);
 }

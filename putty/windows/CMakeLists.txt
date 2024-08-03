@@ -178,7 +178,14 @@ if(HAVE_CONPTY)
   installed_program(pterm)
 
   add_library(libterm STATIC
-	  winterm.c)
+    winterm.c
+    pterm.c
+    conpty.c
+    ${CMAKE_SOURCE_DIR}/putty/stubs/no-gss.c
+    ${CMAKE_SOURCE_DIR}/putty/stubs/no-ca-config.c
+    ${CMAKE_SOURCE_DIR}/putty/stubs/no-rand.c
+    ${CMAKE_SOURCE_DIR}/putty/proxy/nosshproxy.c
+  )
 else()
   message("ConPTY not available; cannot build Windows pterm")
 endif()
