@@ -16,6 +16,13 @@
 #include "puttymem.h"
 #include "misc.h"
 
+#ifdef _DEBUG
+static unsigned int malloc_count = 0;
+static unsigned int real_malloc = 0;
+static unsigned int fake_malloc = 0;
+static unsigned int free_count = 0;
+static unsigned int reused_count = 0;
+#endif 
 /*
  * The memory pool code is from PostgreSQL. Please check aset.c
  */
@@ -1774,13 +1781,23 @@ AllocSetAlloc(MemoryContext context, Size size, int flags)
 	/* due to the keeper block set->blocks should never be NULL */
 	Assert(set->blocks != NULL);
 
+#ifdef _DEBUG
+	malloc_count++;
+#endif 
 	/*
 	 * If requested size exceeds maximum for chunks we hand the request off to
 	 * AllocSetAllocLarge().
 	 */
 	if (size > set->allocChunkLimit)
+	{
+#ifdef _DEBUG
+		real_malloc++;
+#endif 
 		return AllocSetAllocLarge(context, size, flags);
-
+	}
+#ifdef _DEBUG
+	fake_malloc++;
+#endif 
 	/*
 	 * Request is small enough to be treated as a chunk.  Look in the
 	 * corresponding free list to see if there is a free chunk we could reuse.
@@ -1829,6 +1846,9 @@ AllocSetAlloc(MemoryContext context, Size size, int flags)
 		/* Disallow access to the chunk header. */
 		VALGRIND_MAKE_MEM_NOACCESS(chunk, ALLOC_CHUNKHDRSZ);
 #endif 
+#ifdef _DEBUG
+		reused_count++;
+#endif
 		return MemoryChunkGetPointer(chunk);
 	}
 
@@ -1892,6 +1912,11 @@ AllocSetFree(void* pointer)
 	/* Allow access to the chunk header. */
 	VALGRIND_MAKE_MEM_DEFINED(chunk, ALLOC_CHUNKHDRSZ);
 #endif 
+
+#ifdef _DEBUG
+	free_count++;
+#endif 
+
 	if (MemoryChunkIsExternal(chunk))
 	{
 		/* Release single-chunk block. */
@@ -2596,6 +2621,13 @@ void mempool_term(void)
 		AllocSetDelete(TopMemoryContext);
 		TopMemoryContext = NULL;
 	}
+
+#ifdef _DEBUG
+	char buffer[128] = { 0 };
+	sprintf_s(buffer, 128, "====>[TOTAL- %d : REAL- %d : FAKE- %d : REUSE- %d : FREE- %d]\n", 
+		malloc_count, real_malloc, fake_malloc, reused_count, free_count);
+	OutputDebugStringA(buffer);
+#endif 
 }
 
 void *safemalloc(size_t factor1, size_t factor2, size_t addend)

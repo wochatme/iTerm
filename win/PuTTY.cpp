@@ -7175,4 +7175,68 @@ BOOL PuTTY_SwitchSession(void* handle)
     return bRet;
 }
 
+int PuTTY_RemoveSession(void* handle)
+{
+    int nRet = SELECT_NOTHING;
+    TermList* tl = (TermList*)handle;
+    if (tl && term_count > 1) // if we have one session, we cannot delete it.
+    {
+        nRet = SELECT_RIGHTSIDE;
+        if (tl->next) // we have a session on the right
+        {
+            term_curr = tl->next;
+            if (tl->prev) // we also have a session on the left
+            {
+                tl->prev->next = tl->next;
+                tl->next->prev = tl->prev;
+            }
+            else
+            {
+                assert(tl == term_head);
+                term_head = tl->next;
+                term_head->prev = NULL;
+            }
+        }
+        else // we have a session on the left
+        {
+            assert(tl->prev);
+            assert(tl == term_tail);
+            term_curr = term_tail = tl->prev;
+            term_tail->next = NULL;
+            nRet = SELECT_LEFTSIDE;
+        }
+
+        term->term_status &= ~TERM_SHOWING;
+        term_set_focus(term, false);
+
+        free_term_list(tl);
+        term_count--;
+
+        conf = term_curr->conf;
+        logctx = term_curr->logctx;
+        backend = term_curr->backend;
+        ldisc = term_curr->ldisc;
+
+        term = term_curr->term;
+
+        term->term_status |= TERM_SHOWING;
+        term_set_focus(term, true);
+        term_update(term);
+#if 0
+        {
+            SCROLLINFO si;
+            si.cbSize = sizeof(si);
+            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+            si.nMin = 0;
+            si.nMax = term->rows - 1;
+            si.nPage = term->rows;
+            si.nPos = 0;
+            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
+        }
+#endif 
+        InvalidateRect(wgs.term_hwnd, NULL, true);
+    }
+
+    return nRet;
+}
 

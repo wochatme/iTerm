@@ -836,10 +836,10 @@ public:
 					// We should have already done SetCapture, but just
 					// in case, we'll set it again.
 					this->SetCapture();
-
+#if 0
 					// Set focus so that we get an ESC key press
 					pT->SetFocus();
-
+#endif 
 					// This call to DoDragDrop is just to ensure a dependency on OLE32.dll.
 					// In the future, if we support true OLE drag and drop,
 					// we'll really use DoDragDrop.
@@ -1281,11 +1281,12 @@ public:
 	{
 		T* pT = static_cast<T*>(this);
 		POINT ptCursor = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-		if (::PtInRect(&m_rcCloseButton, ptCursor))
+
+		if (::PtInRect(&m_rcCloseButton, ptCursor)) // hit the close button
 		{
 			m_dwState |= (ectcMouseDownL_CloseButton | ectcMouseOver_CloseButton);
-			this->InvalidateRect(&m_rcCloseButton);
-			this->SetCapture();
+			pT->InvalidateRect(&m_rcCloseButton);
+			pT->SetCapture();
 		}
 		else if (::PtInRect(&m_rcScrollRight, ptCursor))
 		{
@@ -1351,16 +1352,9 @@ public:
 
 			NMCTCITEM nmh = 
 			{ 
-				{ 
-					pT->m_hWnd, 
-					0, 
-					NM_CLICK 
-				}, 
+				{ pT->m_hWnd, 0, NM_CLICK }, 
 				nIndex, 
-				{
-					ptCursor.x, 
-					ptCursor.y
-				} 
+				{ ptCursor.x, ptCursor.y	} 
 			};
 
 			if (FALSE == ::SendMessage(pT->GetParent(), WM_NOTIFY, nmh.hdr.idFrom, (LPARAM)&nmh))
@@ -1381,7 +1375,7 @@ public:
 					// This could be a drag operation.  We'll start the actual drag
 					// operation in OnMouseMove if the mouse moves while the left mouse
 					// button is still pressed.  OnLButtonUp will ReleaseCapture.
-					this->SetCapture();
+					pT->SetCapture();
 				}
 			}
 		}
@@ -1411,11 +1405,7 @@ public:
 				// Close Button
 				NMCTCITEM nmh = 
 				{ 
-					{ 
-						pT->m_hWnd, 
-						0, 
-						CTCN_CLOSE 
-					}, 
+					{ pT->m_hWnd, 0, CTCN_CLOSE }, 
 					m_iCurSel, 
 					{ptCursor.x, ptCursor.y} 
 				};
@@ -2667,11 +2657,7 @@ public:
 			// Returning TRUE tells us not to delete the item
 			NMCTCITEM nmh = 
 			{ 
-				{ 
-					pT->m_hWnd, 
-					0, 
-					CTCN_DELETEITEM 
-				}, 
+				{ 	pT->m_hWnd, 0, CTCN_DELETEITEM }, 
 				(int)nItem, 
 				{-1,-1} 
 			};

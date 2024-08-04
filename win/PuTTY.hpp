@@ -23,3 +23,9 @@ void* PuTTY_GetActiveTerm(void);
 void* PuTTY_NewSession();
 
 BOOL PuTTY_SwitchSession(void* handle);
+
+#define SELECT_NOTHING		0
+#define SELECT_LEFTSIDE		-1
+#define SELECT_RIGHTSIDE	1
+
+int PuTTY_RemoveSession(void* handle);

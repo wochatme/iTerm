@@ -172,9 +172,6 @@ static int AppInit(HINSTANCE hInstance)
 static int AppTerm(HINSTANCE hInstance = NULL)
 {
 	PuTTY_Term();
-
-	//MessageBox(NULL, L"---------", L"XXXX", MB_OK);
-
 	return 0;
 }
 

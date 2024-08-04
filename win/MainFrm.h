@@ -184,23 +184,45 @@ public:
 #if 0
 				int sel = m_viewTab.GetCurSel();
 #endif 
+				m_viewTTY.SetFocus();
+
 				switch (pNMHDR->code)
 				{
 				case NM_CLICK:
 					if (idx >= 0 && idx < count)
 					{
-						XCustomTabItem* pIterm = m_viewTab.GetItem(idx);
-						if (pIterm)
+						XCustomTabItem* pItem = m_viewTab.GetItem(idx);
+						if (pItem)
 						{
-							void* handle = pIterm->GetPrivateData();
+							void* handle = pItem->GetPrivateData();
 							BOOL bRet = PuTTY_SwitchSession(handle);
 							if (bRet)
 							{
-								m_viewTTY.SetFocus();
 								return 0;
 							}
 							else
+							{
 								return 1;
+							}
+						}
+					}
+					break;
+				case CTCN_CLOSE:
+					if (idx >= 0 && idx < count && count > 1)
+					{
+						int choice = MessageBox(L"Are you sure to close this session?", L"Close Session", MB_YESNO);
+						if (choice == IDYES)
+						{
+							XCustomTabItem* pItem = m_viewTab.GetItem(idx);
+							if (pItem)
+							{
+								void* handle = pItem->GetPrivateData();
+								int nRet = PuTTY_RemoveSession(handle);
+								if (nRet == SELECT_RIGHTSIDE || nRet == SELECT_LEFTSIDE)
+								{
+									m_viewTab.DeleteItem(idx, true, false);
+								}
+							}
 						}
 					}
 					break;
