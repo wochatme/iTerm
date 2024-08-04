@@ -21,6 +21,7 @@ class CMainFrame :
 	public CUpdateUI<CMainFrame>,
 	public CMessageFilter, public CIdleHandler
 {
+	int m_tabCount = 0;
 public:
 	DECLARE_FRAME_WND_CLASS(NULL, IDR_MAINFRAME)
 
@@ -46,10 +47,12 @@ public:
 
 	BEGIN_MSG_MAP(CMainFrame)
 		MESSAGE_HANDLER(WM_ERASEBKGND, OnEraseBackground)
+		MESSAGE_HANDLER(WM_PUTTY_KEYMSG, OnPuTTYKeyMessage)
 		MESSAGE_HANDLER(WM_PUTTY_NOTIFY, OnPuTTYNotify)
 		MESSAGE_HANDLER(WM_NOTIFY, OnNotify)
 		MESSAGE_HANDLER(WM_SIZE, OnSize)
 		MESSAGE_HANDLER(WM_SETFOCUS, OnSetFocus)
+		MESSAGE_HANDLER(WM_GETMINMAXINFO, OnGetMinMaxInfo)
 		MESSAGE_HANDLER(WM_ENTERSIZEMOVE, OnEnterSizeMove)
 		MESSAGE_HANDLER(WM_EXITSIZEMOVE, OnExitSizeMove)
 		MESSAGE_HANDLER(WM_SYSCOMMAND, OnSysCommand)
@@ -63,6 +66,52 @@ public:
 	{
 		// handled, no background painting needed
 		return 1;
+	}
+
+	LRESULT OnGetMinMaxInfo(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL& bHandled)
+	{
+		LPMINMAXINFO lpMMI = (LPMINMAXINFO)lParam;
+		lpMMI->ptMinTrackSize.x = 800;
+		lpMMI->ptMinTrackSize.y = 600;
+		return 0;
+	}
+
+	
+	LRESULT OnPuTTYKeyMessage(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+	{
+		if (lParam == 0)
+		{
+			int count = 0;
+			switch (wParam)
+			{
+			case VK_TAB:
+				count = m_viewTab.GetItemCount();
+				if (count > 1)
+				{
+					int idx = 0;
+					int sel = m_viewTab.GetCurSel();
+
+					idx = (sel < count - 1) ? (sel + 1) : 0;
+					XCustomTabItem* pItem = m_viewTab.GetItem(idx);
+					if (pItem)
+					{
+						void* handle = pItem->GetPrivateData();
+						BOOL bRet = PuTTY_SwitchSession(handle);
+						if (bRet)
+						{
+							m_viewTab.SetCurSel(idx, false);
+						}
+					}
+				}
+				break;
+			case VK_INSERT:
+				DoNewSession();
+				break;
+			default:
+				break;
+			}
+		}
+		return 0;
 	}
 
 	LRESULT OnPuTTYNotify(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
@@ -82,13 +131,14 @@ public:
 		m_viewTab.Create(m_hWnd, rcDefault, NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN);
 
 		m_viewTab.ModifyStyle(0,
+			//CTCS_DRAGREARRANGE |
 			CTCS_TOOLTIPS |
 			CTCS_SCROLL |
-			CTCS_CLOSEBUTTON |
-			CTCS_DRAGREARRANGE
+			CTCS_CLOSEBUTTON
 		);
 
 		m_viewTab.InsertItem(0, L"cmd.exe[00]", -1, L"command line", true);
+		m_tabCount = 1;
 
 		m = GetSystemMenu(FALSE);
 		AppendMenu(m, MF_SEPARATOR, 0, 0);
@@ -96,7 +146,9 @@ public:
 		AppendMenu(m, MF_ENABLED, IDM_NEW_SESSION, L"Ne&w Session");
 		AppendMenu(m, MF_ENABLED, IDM_TTY_SETTING, L"TTY Settings...");
 		AppendMenu(m, MF_ENABLED, IDM_COPY_ALL, L"C&opy All to Clipboard");
+#if 0
 		AppendMenu(m, MF_ENABLED, IDM_CLEAR_SB, L"C&lear Scrollback");
+#endif 
 		AppendMenu(m, MF_SEPARATOR, 0, 0);
 		AppendMenu(m, MF_ENABLED, IDM_ABOUT_ITERM, L"&About iTerm");
 
@@ -181,9 +233,7 @@ public:
 				
 				int idx = pNMCTCITEM->iItem;
 				int count = m_viewTab.GetItemCount();
-#if 0
-				int sel = m_viewTab.GetCurSel();
-#endif 
+
 				m_viewTTY.SetFocus();
 
 				switch (pNMHDR->code)
@@ -234,34 +284,37 @@ public:
 		return 0;
 	}
 
+	void DoNewSession()
+	{
+		void* term = PuTTY_NewSession();
+		if (term)
+		{
+			wchar_t title[128] = { 0 };
+			int idx = m_viewTab.GetItemCount();
+
+			swprintf((wchar_t*)title, 128, L"cmd.exe[%02d]", m_tabCount++);
+
+			m_viewTab.InsertItem(idx, title, -1, L"command line", true);
+
+			XCustomTabItem* pIterm = m_viewTab.GetItem(idx);
+			if (pIterm)
+			{
+				pIterm->SetPrivateData(term);
+			}
+			m_viewTTY.SetFocus();
+		}
+		else
+		{
+			MessageBox(L"You can open 60 tabs at maximum", L"Maximum Tabs Are Reached", MB_OK);
+		}
+	}
+
 	LRESULT OnSysCommand(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
 	{
 		switch (wParam & ~0xF) /* low 4 bits reserved to Windows */
 		{
 		case IDM_NEW_SESSION:
-		{
-			void* term = PuTTY_NewSession();
-			if (term)
-			{
-				wchar_t title[128] = { 0 };
-				int idx = m_viewTab.GetItemCount();
-
-				swprintf((wchar_t*)title, 128, L"cmd.exe[%02d]", idx);
-
-				m_viewTab.InsertItem(idx, title, -1, L"command line", true);
-
-				XCustomTabItem* pIterm = m_viewTab.GetItem(idx);
-				if (pIterm)
-				{
-					pIterm->SetPrivateData(term);
-				}
-				m_viewTTY.SetFocus();
-			}
-			else
-			{
-				MessageBox(L"You can open 60 tabs at maximum", L"Maximum Tabs Are Reached", MB_OK);
-			}
-		}
+			DoNewSession();
 			break;
 		case IDM_NEW_WINDOW:
 		{
@@ -276,18 +329,23 @@ public:
 			}
 		}
 			break;
-#if 0
-		case IDM_ABOUT:
+		case IDM_TTY_SETTING :
+			//PuTTY_Config(m_hWnd);
+			break;
+		case IDM_COPY_ALL :
+			PuTTY_CopyAll();
+			break;
+		case IDM_ABOUT_ITERM:
 		{
 			CAboutDlg dlg;
 			dlg.DoModal();
 		}
 			break;
-#endif 
 		default:
 			bHandled = FALSE;
 			break;
 		}
+
 		return 0;
 	}
 

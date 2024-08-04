@@ -740,7 +740,6 @@ static cmdline_get_passwd_input_state cmdline_get_passwd_state = { 0 };
 
 static struct unicode_data ucsdata = { 0 };
 static bool session_closed = false;
-static bool reconfiguring = false;
 
 static const SessionSpecial* specials = NULL;
 static HMENU specials_menu = NULL;
@@ -4001,6 +4000,33 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
         }
         return false;
     case WM_KEYDOWN:
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+        {
+            WPARAM wp = 0;
+            bool captured = false;
+
+            if (wParam == VK_TAB ||
+                wParam == VK_RETURN ||
+                wParam == VK_INSERT ||
+                wParam == VK_HOME ||
+                wParam == VK_PRIOR ||
+                wParam == VK_NEXT ||
+                wParam == VK_END ||
+                wParam == VK_DELETE ||
+                wParam == VK_F1 ||
+                wParam == VK_F2
+                )
+            {
+                wp = wParam;
+                captured = true;
+            }
+
+            if (captured)
+            {
+                PostMessage(hWndMain, WM_PUTTY_KEYMSG, wp, 0);
+                break;
+            }
+        }
     case WM_SYSKEYDOWN:
     case WM_KEYUP:
     case WM_SYSKEYUP:
@@ -4008,8 +4034,9 @@ LRESULT PuTTY_WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, BOO
          * Add the scan code and keypress timing to the random
          * number noise.
          */
+#if 0
         noise_ultralight(NOISE_SOURCE_KEY, lParam);
-
+#endif 
         /*
          * We don't do TranslateMessage since it disassociates the
          * resulting CHAR message from the KEYDOWN that sparked it,
@@ -7031,6 +7058,204 @@ void* PuTTY_GetActiveTerm(void)
     return term_curr;
 }
 
+void PuTTY_CopyAll(void)
+{
+    if (term)
+    {
+        term_copyall(term, clips_system, lenof(clips_system));
+    }
+}
+
+void PuTTY_Config(HWND hWnd)
+{
+    static bool reconfiguring = false;
+    Conf* prev_conf;
+    int init_lvl = 1;
+    bool reconfig_result;
+
+    if (!reconfiguring)
+    {
+        reconfiguring = true;
+
+        term_pre_reconfig(term, conf);
+        prev_conf = conf_copy(conf);
+
+        reconfig_result = do_reconfig(hWnd, conf, backend ? backend_cfg_info(backend) : 0);
+        reconfiguring = false;
+        if (!reconfig_result) 
+        {
+            conf_free(prev_conf);
+            return;
+        }
+
+        conf_cache_data();
+#if 0
+        resize_action = conf_get_int(conf, CONF_resize_action);
+        {
+            /* Disable full-screen if resizing forbidden */
+            int i;
+            for (i = 0; i < lenof(popup_menus); i++)
+                EnableMenuItem(popup_menus[i].menu, IDM_FULLSCREEN,
+                    MF_BYCOMMAND |
+                    (resize_action == RESIZE_DISABLED
+                        ? MF_GRAYED : MF_ENABLED));
+            /* Gracefully unzoom if necessary */
+            if (IsZoomed(hwnd) && (resize_action == RESIZE_DISABLED))
+                ShowWindow(hwnd, SW_RESTORE);
+        }
+#endif 
+        /* Pass new config data to the logging module */
+        log_reconfig(logctx, conf);
+
+        sfree(logpal);
+        /*
+         * Flush the line discipline's edit buffer in the
+         * case where local editing has just been disabled.
+         */
+        if (ldisc) {
+            ldisc_configure(ldisc, conf);
+            ldisc_echoedit_update(ldisc);
+        }
+
+        if (conf_get_bool(conf, CONF_system_colour) !=
+            conf_get_bool(prev_conf, CONF_system_colour))
+            term_notify_palette_changed(term);
+
+        /* Pass new config data to the terminal */
+        term_reconfig(term, conf);
+        setup_clipboards(term, conf);
+
+        /* Reinitialise the colour palette, in case the terminal
+         * just read new settings out of Conf */
+        if (pal)
+            DeleteObject(pal);
+        logpal = NULL;
+        pal = NULL;
+        init_palette();
+
+        /* Pass new config data to the back end */
+        if (backend)
+            backend_reconfig(backend, conf);
+
+#if 0
+        /* Screen size changed ? */
+        if (conf_get_int(conf, CONF_height) !=
+            conf_get_int(prev_conf, CONF_height) ||
+            conf_get_int(conf, CONF_width) !=
+            conf_get_int(prev_conf, CONF_width) ||
+            conf_get_int(conf, CONF_savelines) !=
+            conf_get_int(prev_conf, CONF_savelines) ||
+            resize_action == RESIZE_FONT ||
+            (resize_action == RESIZE_EITHER && IsZoomed(hwnd)) ||
+            resize_action == RESIZE_DISABLED)
+            term_size(term, conf_get_int(conf, CONF_height),
+                conf_get_int(conf, CONF_width),
+                conf_get_int(conf, CONF_savelines));
+
+        /* Enable or disable the scroll bar, etc */
+        {
+            LONG nflg, flag = GetWindowLongPtr(hwnd, GWL_STYLE);
+            LONG nexflag, exflag =
+                GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+
+            nexflag = exflag;
+            if (conf_get_bool(conf, CONF_alwaysontop) !=
+                conf_get_bool(prev_conf, CONF_alwaysontop)) {
+                if (conf_get_bool(conf, CONF_alwaysontop)) {
+                    nexflag |= WS_EX_TOPMOST;
+                    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE);
+                }
+                else {
+                    nexflag &= ~(WS_EX_TOPMOST);
+                    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE);
+                }
+            }
+            if (conf_get_bool(conf, CONF_sunken_edge))
+                nexflag |= WS_EX_CLIENTEDGE;
+            else
+                nexflag &= ~(WS_EX_CLIENTEDGE);
+
+            nflg = flag;
+            if (conf_get_bool(conf, is_full_screen() ?
+                CONF_scrollbar_in_fullscreen :
+                CONF_scrollbar))
+                nflg |= WS_VSCROLL;
+            else
+                nflg &= ~WS_VSCROLL;
+
+            if (resize_action == RESIZE_DISABLED ||
+                is_full_screen())
+                nflg &= ~WS_THICKFRAME;
+            else
+                nflg |= WS_THICKFRAME;
+
+            if (resize_action == RESIZE_DISABLED)
+                nflg &= ~WS_MAXIMIZEBOX;
+            else
+                nflg |= WS_MAXIMIZEBOX;
+
+            if (nflg != flag || nexflag != exflag) {
+                if (nflg != flag)
+                    SetWindowLongPtr(hwnd, GWL_STYLE, nflg);
+                if (nexflag != exflag)
+                    SetWindowLongPtr(hwnd, GWL_EXSTYLE, nexflag);
+
+                SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                    SWP_NOACTIVATE | SWP_NOCOPYBITS |
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                    SWP_FRAMECHANGED);
+
+                init_lvl = 2;
+            }
+        }
+
+        /* Oops */
+        if (resize_action == RESIZE_DISABLED && IsZoomed(hwnd)) {
+            force_normal(hwnd);
+            init_lvl = 2;
+        }
+#endif 
+        {
+            FontSpec* font = conf_get_fontspec(conf, CONF_font);
+            FontSpec* prev_font = conf_get_fontspec(prev_conf,
+                CONF_font);
+
+            if (!strcmp(font->name, prev_font->name) ||
+                !strcmp(conf_get_str(conf, CONF_line_codepage),
+                    conf_get_str(prev_conf, CONF_line_codepage)) ||
+                font->isbold != prev_font->isbold ||
+                font->height != prev_font->height ||
+                font->charset != prev_font->charset ||
+                conf_get_int(conf, CONF_font_quality) !=
+                conf_get_int(prev_conf, CONF_font_quality) ||
+                conf_get_int(conf, CONF_vtmode) !=
+                conf_get_int(prev_conf, CONF_vtmode) ||
+                conf_get_int(conf, CONF_bold_style) !=
+                conf_get_int(prev_conf, CONF_bold_style))
+#if 0
+                ||
+                resize_action == RESIZE_DISABLED ||
+                resize_action == RESIZE_EITHER ||
+                resize_action != conf_get_int(prev_conf,
+                    CONF_resize_action))
+                init_lvl = 2;
+#endif 
+                {
+                    deinit_fonts();
+                    init_fonts(0, 0);
+                }
+        }
+
+        InvalidateRect(wgs.term_hwnd, NULL, true);
+#if 0
+        reset_window(init_lvl);
+#endif 
+        conf_free(prev_conf);
+    }
+}
+
 void PuTTY_EnterSizing(void)
 {
     resizing = true;
@@ -7155,7 +7380,7 @@ BOOL PuTTY_SwitchSession(void* handle)
         term_update(term);
 
         term_curr = tl;
-
+#if 0
         {
             SCROLLINFO si;
             si.cbSize = sizeof(si);
@@ -7166,7 +7391,7 @@ BOOL PuTTY_SwitchSession(void* handle)
             si.nPos = 0;
             SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
         }
-
+#endif 
         InvalidateRect(wgs.term_hwnd, NULL, true);
 
         bRet = TRUE;
