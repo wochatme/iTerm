@@ -18,13 +18,12 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
-
+#include "resource.h"
 #include "PuTTY.hpp"
 
 // new variables
 /////////////////////////////////////////////////////////
 bool  terminal_has_focus = false;
-
 static int prev_client_width = 0;
 static int prev_client_height = 0;
 static HWND hWndMain = NULL;  // the handle of the main window
@@ -32,12 +31,17 @@ static HWND hWndMain = NULL;  // the handle of the main window
 static int term_row, term_col, term_savelines;
 
 /////////////////////////////////////////////////////////////
+#define TERMLIST_FONT_IS_CHANGED        0x01
+
 typedef struct TermList TermList;
+
 struct TermList
 {
     TermList* next;
     TermList* prev;
-    uint64_t  state;
+    uint8_t  status;
+    int width_pixel;  // the window width in pixel
+    int height_pixel; // the window height in pixel
     Conf* conf;
     Terminal* term;
     LogContext* logctx;
@@ -127,14 +131,15 @@ int has_embedded_chm(void) { return 0; }
 
 //- CONPTY.C///////////////////////////////////////////////////////////////////////////////////////////////////
 typedef struct ConPTY ConPTY;
-struct ConPTY {
+struct ConPTY 
+{
     HPCON pseudoconsole;
     HANDLE outpipe, inpipe, hprocess;
     struct handle* out, * in;
     HandleWait* subprocess;
     bool exited;
     DWORD exitstatus;
-    Terminal* term;
+    Terminal* term;  /* this field is used for multiple sessions */
     Seat* seat;
     LogContext* logctx;
     int bufsize;
@@ -1081,439 +1086,8 @@ static bool unicode_window = true;
 static BOOL(WINAPI* sw_PeekMessage)(LPMSG, HWND, UINT, UINT, UINT);
 static LRESULT(WINAPI* sw_DispatchMessage)(const MSG*);
 static LRESULT(WINAPI* sw_DefWindowProc)(HWND, UINT, WPARAM, LPARAM);
-#if 0
-static void sw_SetWindowText(HWND hwnd, wchar_t* text)
-{
-    if (unicode_window) {
-        SetWindowTextW(hwnd, text);
-    }
-    else {
-        char* mb = dup_wc_to_mb(DEFAULT_CODEPAGE, 0, text, "?");
-        SetWindowTextA(hwnd, mb);
-        sfree(mb);
-    }
-}
-
-static HINSTANCE hprev;
-
-/*
- * Also, registering window classes has to be done in a fiddly way.
- */
-#define SETUP_WNDCLASS(wndclass, classname) do {                        \
-        wndclass.style = 0;                                             \
-        wndclass.lpfnWndProc = WndProc;                                 \
-        wndclass.cbClsExtra = 0;                                        \
-        wndclass.cbWndExtra = 0;                                        \
-        wndclass.hInstance = hinst;                                     \
-        wndclass.hIcon = LoadIcon(hinst, MAKEINTRESOURCE(IDI_MAINICON)); \
-        wndclass.hCursor = LoadCursor(NULL, IDC_IBEAM);                 \
-        wndclass.hbrBackground = NULL;                                  \
-        wndclass.lpszMenuName = NULL;                                   \
-        wndclass.lpszClassName = classname;                             \
-    } while (0)
-wchar_t* terminal_window_class_w(void)
-{
-    static wchar_t* classname = NULL;
-    if (!classname)
-        classname = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
-    if (!hprev) {
-        WNDCLASSW wndclassw;
-        SETUP_WNDCLASS(wndclassw, classname);
-        RegisterClassW(&wndclassw);
-    }
-    return classname;
-}
-char* terminal_window_class_a(void)
-{
-    static char* classname = NULL;
-    if (!classname)
-        classname = dupcat(appname, ".ansi");
-    if (!hprev) {
-        WNDCLASSA wndclassa;
-        SETUP_WNDCLASS(wndclassa, classname);
-        RegisterClassA(&wndclassa);
-    }
-    return classname;
-}
-#endif 
 
 HINSTANCE hinst;
-
-#if 0
-int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
-{
-    MSG msg;
-    HRESULT hr;
-    int guess_width, guess_height;
-
-    dll_hijacking_protection();
-
-    hinst = inst;
-    hprev = prev;
-
-    sk_init();
-
-    init_common_controls();
-
-    /* Set Explicit App User Model Id so that jump lists don't cause
-       PuTTY to hang on to removable media. */
-
-    set_explicit_app_user_model_id();
-
-    /* Ensure a Maximize setting in Explorer doesn't maximise the
-     * config box. */
-    defuse_showwindow();
-
-    init_winver();
-
-    /*
-     * If we're running a version of Windows that doesn't support
-     * WM_MOUSEWHEEL, find out what message number we should be
-     * using instead.
-     */
-    if (osMajorVersion < 4 ||
-        (osMajorVersion == 4 && osPlatformId != VER_PLATFORM_WIN32_NT))
-        wm_mousewheel = RegisterWindowMessage("MSWHEEL_ROLLMSG");
-
-    init_help();
-
-    init_winfuncs();
-
-    conf = conf_new();
-
-    /*
-     * Initialize COM.
-     */
-    hr = CoInitialize(NULL);
-    if (hr != S_OK && hr != S_FALSE) {
-        char* str = dupprintf("%s Fatal Error", appname);
-        MessageBoxA(NULL, "Failed to initialize COM subsystem",
-            str, MB_OK | MB_ICONEXCLAMATION);
-        sfree(str);
-        return 1;
-    }
-
-    /*
-     * Process the command line.
-     */
-    gui_term_process_cmdline(conf, cmdline);
-
-    memset(&ucsdata, 0, sizeof(ucsdata));
-
-    conf_cache_data();
-
-    /*
-     * Guess some defaults for the window size. This all gets
-     * updated later, so we don't really care too much. However, we
-     * do want the font width/height guesses to correspond to a
-     * large font rather than a small one...
-     */
-
-    font_width = 10;
-    font_height = 20;
-    extra_width = 25;
-    extra_height = 28;
-    guess_width = extra_width + font_width * conf_get_int(conf, CONF_width);
-    guess_height = extra_height + font_height * conf_get_int(conf, CONF_height);
-    {
-        RECT r;
-        get_fullscreen_rect(&r);
-        if (guess_width > r.right - r.left)
-            guess_width = r.right - r.left;
-        if (guess_height > r.bottom - r.top)
-            guess_height = r.bottom - r.top;
-    }
-
-    {
-        int winmode = WS_OVERLAPPEDWINDOW | WS_VSCROLL;
-        int exwinmode = 0;
-        const struct BackendVtable* vt =
-            backend_vt_from_proto(be_default_protocol);
-        bool resize_forbidden = false;
-        if (vt && vt->flags & BACKEND_RESIZE_FORBIDDEN)
-            resize_forbidden = true;
-        wchar_t* uappname = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
-        window_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
-        icon_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
-        if (!conf_get_bool(conf, CONF_scrollbar))
-            winmode &= ~(WS_VSCROLL);
-        if (conf_get_int(conf, CONF_resize_action) == RESIZE_DISABLED ||
-            resize_forbidden)
-            winmode &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
-        if (conf_get_bool(conf, CONF_alwaysontop))
-            exwinmode |= WS_EX_TOPMOST;
-        if (conf_get_bool(conf, CONF_sunken_edge))
-            exwinmode |= WS_EX_CLIENTEDGE;
-
-#ifdef TEST_ANSI_WINDOW
-        /* For developer testing of ANSI window support, pretend
-         * CreateWindowExW failed */
-        wgs.term_hwnd = NULL;
-        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-#else
-        unicode_window = true;
-        sw_PeekMessage = PeekMessageW;
-        sw_DispatchMessage = DispatchMessageW;
-        sw_DefWindowProc = DefWindowProcW;
-        wgs.term_hwnd = CreateWindowExW(
-            exwinmode, terminal_window_class_w(), uappname,
-            winmode, CW_USEDEFAULT, CW_USEDEFAULT,
-            guess_width, guess_height, NULL, NULL, inst, NULL);
-#endif
-
-#if defined LEGACY_WINDOWS || defined TEST_ANSI_WINDOW
-        if (!wgs.term_hwnd && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
-            /* Fall back to an ANSI window, swapping in all the ANSI
-             * window message handling functions */
-            unicode_window = false;
-            sw_PeekMessage = PeekMessageA;
-            sw_DispatchMessage = DispatchMessageA;
-            sw_DefWindowProc = DefWindowProcA;
-            wgs.term_hwnd = CreateWindowExA(
-                exwinmode, terminal_window_class_a(), appname,
-                winmode, CW_USEDEFAULT, CW_USEDEFAULT,
-                guess_width, guess_height, NULL, NULL, inst, NULL);
-        }
-#endif
-
-        if (!wgs.term_hwnd) {
-            modalfatalbox("Unable to create terminal window: %s",
-                win_strerror(GetLastError()));
-        }
-        memset(&dpi_info, 0, sizeof(struct _dpi_info));
-        init_dpi_info();
-        sfree(uappname);
-    }
-
-    /*
-     * Initialise the fonts, simultaneously correcting the guesses
-     * for font_{width,height}.
-     */
-    init_fonts(0, 0);
-
-    /*
-     * Prepare a logical palette.
-     */
-    init_palette();
-
-    /*
-     * Initialise the terminal. (We have to do this _after_
-     * creating the window, since the terminal is the first thing
-     * which will call schedule_timer(), which will in turn call
-     * timer_change_notify() which will expect hwnd to exist.)
-     */
-    wintw->vt = &windows_termwin_vt;
-    term = term_init(conf, &ucsdata, wintw);
-    setup_clipboards(term, conf);
-    logctx = log_init(&wgs.logpolicy, conf);
-    term_provide_logctx(term, logctx);
-    term_size(term, conf_get_int(conf, CONF_height),
-        conf_get_int(conf, CONF_width),
-        conf_get_int(conf, CONF_savelines));
-
-    /*
-     * Correct the guesses for extra_{width,height}.
-     */
-    {
-        RECT cr, wr;
-        GetWindowRect(wgs.term_hwnd, &wr);
-        GetClientRect(wgs.term_hwnd, &cr);
-        offset_width = offset_height = conf_get_int(conf, CONF_window_border);
-        extra_width = wr.right - wr.left - cr.right + cr.left + offset_width * 2;
-        extra_height = wr.bottom - wr.top - cr.bottom + cr.top + offset_height * 2;
-    }
-
-    /*
-     * Resize the window, now we know what size we _really_ want it
-     * to be.
-     */
-    guess_width = extra_width + font_width * term->cols;
-    guess_height = extra_height + font_height * term->rows;
-    SetWindowPos(wgs.term_hwnd, NULL, 0, 0, guess_width, guess_height,
-        SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
-
-    /*
-     * Set up a caret bitmap, with no content.
-     */
-    {
-        char* bits;
-        int size = (font_width + 15) / 16 * 2 * font_height;
-        bits = snewn(size, char);
-        memset(bits, 0, size);
-        caretbm = CreateBitmap(font_width, font_height, 1, 1, bits);
-        sfree(bits);
-    }
-    CreateCaret(wgs.term_hwnd, caretbm, font_width, font_height);
-
-    /*
-     * Initialise the scroll bar.
-     */
-    {
-        SCROLLINFO si;
-
-        si.cbSize = sizeof(si);
-        si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-        si.nMin = 0;
-        si.nMax = term->rows - 1;
-        si.nPage = term->rows;
-        si.nPos = 0;
-        SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
-    }
-
-    /*
-     * Prepare the mouse handler.
-     */
-    lastact = MA_NOTHING;
-    lastbtn = MBT_NOTHING;
-    dbltime = GetDoubleClickTime();
-
-    /*
-     * Set up the session-control options on the system menu.
-     */
-    {
-        HMENU m;
-        int j;
-        char* str;
-
-        popup_menus[SYSMENU].menu = GetSystemMenu(wgs.term_hwnd, false);
-        popup_menus[CTXMENU].menu = CreatePopupMenu();
-        AppendMenu(popup_menus[CTXMENU].menu, MF_ENABLED, IDM_COPY, "&Copy");
-        AppendMenu(popup_menus[CTXMENU].menu, MF_ENABLED, IDM_PASTE, "&Paste");
-
-        savedsess_menu = CreateMenu();
-        get_sesslist(&sesslist, true);
-        update_savedsess_menu();
-
-        for (j = 0; j < lenof(popup_menus); j++) {
-            m = popup_menus[j].menu;
-
-            AppendMenu(m, MF_SEPARATOR, 0, 0);
-            AppendMenu(m, MF_ENABLED, IDM_SHOWLOG, "&Event Log");
-            AppendMenu(m, MF_SEPARATOR, 0, 0);
-            AppendMenu(m, MF_ENABLED, IDM_NEWSESS, "Ne&w Session...");
-            AppendMenu(m, MF_ENABLED, IDM_DUPSESS, "&Duplicate Session");
-            AppendMenu(m, MF_POPUP | MF_ENABLED, (UINT_PTR)savedsess_menu,
-                "Sa&ved Sessions");
-            AppendMenu(m, MF_ENABLED, IDM_RECONF, "Chan&ge Settings...");
-            AppendMenu(m, MF_SEPARATOR, 0, 0);
-            AppendMenu(m, MF_ENABLED, IDM_COPYALL, "C&opy All to Clipboard");
-            AppendMenu(m, MF_ENABLED, IDM_CLRSB, "C&lear Scrollback");
-            AppendMenu(m, MF_ENABLED, IDM_RESET, "Rese&t Terminal");
-            AppendMenu(m, MF_SEPARATOR, 0, 0);
-            AppendMenu(m, (conf_get_int(conf, CONF_resize_action)
-                == RESIZE_DISABLED) ? MF_GRAYED : MF_ENABLED,
-                IDM_FULLSCREEN, "&Full Screen");
-            AppendMenu(m, MF_SEPARATOR, 0, 0);
-            if (has_help())
-                AppendMenu(m, MF_ENABLED, IDM_HELP, "&Help");
-            str = dupprintf("&About %s", appname);
-            AppendMenu(m, MF_ENABLED, IDM_ABOUT, str);
-            sfree(str);
-        }
-    }
-
-    if (restricted_acl()) {
-        lp_eventlog(&wgs.logpolicy, "Running with restricted process ACL");
-    }
-
-    winselgui_set_hwnd(wgs.term_hwnd);
-    start_backend();
-
-    /*
-     * Set up the initial input locale.
-     */
-    set_input_locale(GetKeyboardLayout(0));
-
-    /*
-     * Finally show the window!
-     */
-    ShowWindow(wgs.term_hwnd, show);
-    SetForegroundWindow(wgs.term_hwnd);
-
-    term_set_focus(term, GetForegroundWindow() == wgs.term_hwnd);
-    UpdateWindow(wgs.term_hwnd);
-
-    gui_terminal_ready(wgs.term_hwnd, &wgs.seat, backend);
-
-    while (1) {
-        int n;
-        DWORD timeout;
-
-        if (toplevel_callback_pending() ||
-            PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
-            /*
-             * If we have anything we'd like to do immediately, set
-             * the timeout for MsgWaitForMultipleObjects to zero so
-             * that we'll only do a quick check of our handles and
-             * then get on with whatever that was.
-             *
-             * One such option is a pending toplevel callback. The
-             * other is a non-empty Windows message queue, which you'd
-             * think we could leave to MsgWaitForMultipleObjects to
-             * check for us along with all the handles, but in fact we
-             * can't because once PeekMessage in one iteration of this
-             * loop has removed a message from the queue, the whole
-             * queue is considered uninteresting by the next
-             * invocation of MWFMO. So we check ourselves whether the
-             * message queue is non-empty, and if so, set this timeout
-             * to zero to ensure MWFMO doesn't block.
-             */
-            timeout = 0;
-        }
-        else {
-            timeout = INFINITE;
-            /* The messages seem unreliable; especially if we're being tricky */
-            term_set_focus(term, GetForegroundWindow() == wgs.term_hwnd);
-        }
-
-        HandleWaitList* hwl = get_handle_wait_list();
-
-        n = MsgWaitForMultipleObjects(hwl->nhandles, hwl->handles, false,
-            timeout, QS_ALLINPUT);
-
-        if ((unsigned)(n - WAIT_OBJECT_0) < (unsigned)hwl->nhandles)
-            handle_wait_activate(hwl, n - WAIT_OBJECT_0);
-        handle_wait_list_free(hwl);
-
-        while (sw_PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT)
-                goto finished;         /* two-level break */
-
-            HWND logbox = event_log_window();
-            if (!(IsWindow(logbox) && IsDialogMessage(logbox, &msg)))
-                sw_DispatchMessage(&msg);
-
-            /*
-             * WM_NETEVENT messages seem to jump ahead of others in
-             * the message queue. I'm not sure why; the docs for
-             * PeekMessage mention that messages are prioritised in
-             * some way, but I'm unclear on which priorities go where.
-             *
-             * Anyway, in practice I observe that WM_NETEVENT seems to
-             * jump to the head of the queue, which means that if we
-             * were to only process one message every time round this
-             * loop, we'd get nothing but NETEVENTs if the server
-             * flooded us with data, and stop responding to any other
-             * kind of window message. So instead, we keep on round
-             * this loop until we've consumed at least one message
-             * that _isn't_ a NETEVENT, or run out of messages
-             * completely (whichever comes first). And we don't go to
-             * run_toplevel_callbacks (which is where the netevents
-             * are actually processed, causing fresh NETEVENT messages
-             * to appear) until we've done this.
-             */
-            if (msg.message != WM_NETEVENT)
-                break;
-        }
-
-        run_toplevel_callbacks();
-    }
-
-finished:
-    cleanup_exit(msg.wParam);          /* this doesn't return... */
-    return msg.wParam;                 /* ... but optimiser doesn't know */
-}
-#endif 
 
 char* handle_restrict_acl_cmdline_prefix(char* p)
 {
@@ -1626,6 +1200,8 @@ static void setup_clipboards(Terminal* term, Conf* conf)
  */
 void cleanup_exit(int code)
 {
+    if (code)
+        PostQuitMessage(code);
 #if 0
     /*
      * Clean up.
@@ -1642,12 +1218,7 @@ void cleanup_exit(int code)
 #endif 
     random_save_seed();
     shutdown_help();
-#endif 
 
-    if (code)
-        PostQuitMessage(code);
-
-#if 0
     MessageBoxA(NULL, "QUIT", "x", MB_OK);
     /* Clean up COM. */
     CoUninitialize();
@@ -2811,9 +2382,10 @@ static void wm_size_resize_term(int width, int height, bool border)
 
     if (w < 1) w = 1;
     if (h < 1) h = 1;
-
+#if 0
     conf_set_int(conf, CONF_height, h);
     conf_set_int(conf, CONF_width, w);
+#endif
 
     if (resizing) {
         /*
@@ -2834,6 +2406,8 @@ static void wm_size_resize_term(int width, int height, bool border)
     else
     {
         term_size(term, h, w, conf_get_int(conf, CONF_savelines));
+        term_curr->width_pixel = width;
+        term_curr->height_pixel = height;
     }
 
 #if 0
@@ -5689,20 +5263,20 @@ static void wintw_set_icon_title(TermWin* tw, const char* title, int codepage)
 
 static void wintw_set_scrollbar(TermWin* tw, int total, int start, int page)
 {
-    SCROLLINFO si;
-
+    SCROLLINFO si = { 0 };
+#if 0
     if (!conf_get_bool(conf, is_full_screen() ?
         CONF_scrollbar_in_fullscreen : CONF_scrollbar))
         return;
-
+#endif  
     si.cbSize = sizeof(si);
     si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
     si.nMin = 0;
     si.nMax = total - 1;
     si.nPage = page;
     si.nPos = start;
-    if (wgs.term_hwnd)
-        SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, true);
+
+    SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, TRUE);
 }
 
 static bool wintw_setup_draw_ctx(TermWin* tw)
@@ -6876,7 +6450,6 @@ int PuTTY_Term()
     return 0;
 }
 
-
 int PuTTY_MessageLoop(BOOL bHasMessage, MSG* pMSG)
 {
     int n;
@@ -6952,7 +6525,6 @@ int PuTTY_AttachWindow(HWND hWnd, HWND hWndParent, int heightTab)
      */
     wintw->vt = &windows_termwin_vt;
     term = term_init(conf, &ucsdata, wintw);
-    term->term_status = TERM_SHOWING;
     term_curr->term = term;
 
     setup_clipboards(term, conf);
@@ -6988,6 +6560,10 @@ int PuTTY_AttachWindow(HWND hWnd, HWND hWndParent, int heightTab)
                 rect.bottom - rect.top,
                 SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
         }
+
+        GetClientRect(wgs.term_hwnd, &rect);
+        term_curr->width_pixel  = rect.right - rect.left;
+        term_curr->height_pixel = rect.bottom - rect.top;
     }
 
     /*
@@ -7066,6 +6642,327 @@ void PuTTY_CopyAll(void)
     }
 }
 
+void PuTTY_EnterSizing(void)
+{
+    resizing = true;
+    need_backend_resize = false;
+}
+
+void PuTTY_ExitSizing(void)
+{
+    int cw, ch;
+    RECT rc = { 0 };
+
+    resizing = false;
+
+    GetClientRect(wgs.term_hwnd, &rc);
+    cw = rc.right - rc.left;
+    ch = rc.bottom - rc.top;
+
+    if (prev_client_width != cw || prev_client_height != ch)
+    {
+        prev_client_width = cw;
+        prev_client_height = ch;
+
+        term_notify_minimised(term, false);
+
+        GetWindowRect(wgs.term_hwnd, &rc);
+        cw = rc.right - rc.left;
+        ch = rc.bottom - rc.top;
+        term_notify_window_size_pixels(term, cw, ch);
+
+        wm_size_resize_term(prev_client_width, prev_client_height, true);
+        sys_cursor_update();
+        //reset_window(0);
+    }
+    InvalidateRect(wgs.term_hwnd, NULL, true);
+
+    PostMessage(hWndMain, WM_PUTTY_NOTIFY, term->rows, term->cols);
+}
+
+void* PuTTY_NewSession()
+{
+    void* vRet = NULL;
+
+    if (term_count <= 60) // the maximum tabs we can support is 63
+    {
+        int row, col;
+
+        TermList* sess = snew(TermList);
+        memset(sess, 0, sizeof(TermList));
+
+        term_tail->next = sess;
+        sess->prev = term_tail;
+        term_curr = term_tail = sess;
+        term_count++;
+
+        conf = term_curr->conf = conf_new();
+        gui_term_process_cmdline(conf, (char*)"");
+        term_curr->term = term_init(conf, &ucsdata, wintw);
+
+        //shellcmd = NULL; // (char*)"ssh -i d:\\zterm\\1.pem ubuntu@zterm.ai";
+
+        row = term->rows;
+        col = term->cols;
+        term->term_status &= ~TERM_SHOWING;
+        term_set_focus(term, false);
+
+        term = term_curr->term;
+        setup_clipboards(term, conf);
+        logctx = log_init(&wgs.logpolicy, conf);
+        term_curr->logctx = logctx;
+        term_provide_logctx(term, logctx);
+
+        term_size(term, row, col, conf_get_int(conf, CONF_savelines));
+        
+        {
+            RECT rect = { 0 };
+            GetClientRect(wgs.term_hwnd, &rect);
+            term_curr->width_pixel = rect.right - rect.left;
+            term_curr->height_pixel = rect.bottom - rect.top;
+        }
+
+        start_backend();
+        term_curr->backend = backend;
+        term_curr->ldisc = ldisc;
+
+        term_set_focus(term, true);
+        term_update(term);
+        InvalidateRect(wgs.term_hwnd, NULL, true);
+
+        vRet = term_curr;
+    }
+
+    return vRet;
+}
+
+BOOL PuTTY_SwitchSession(void* handle)
+{
+    BOOL bRet = FALSE;
+    TermList* tl = (TermList*)handle;
+    if (tl)
+    {
+        term->term_status &= ~TERM_SHOWING;
+        term_set_focus(term, false);
+
+        term_curr = tl;
+
+        conf = tl->conf;
+        logctx = tl->logctx;
+        backend = tl->backend;
+        ldisc = tl->ldisc;
+        term = tl->term;
+        term->term_status |= TERM_SHOWING;
+        term_set_focus(term, true);
+
+        {
+            RECT rect = { 0 };
+            GetClientRect(wgs.term_hwnd, &rect);
+            int width = rect.right - rect.left;
+            int height = rect.bottom - rect.top;
+
+            if ((term_curr->status & TERMLIST_FONT_IS_CHANGED) || 
+                term_curr->width_pixel != width || term_curr->height_pixel != height)
+            {
+                int col = (width - offset_width * 2) / font_width;
+                int row = (height - offset_height * 2) / font_height;
+
+                if (col < 1) col = 1;
+                if (row < 1) row = 1;
+
+                term_size(term, row, col, conf_get_int(conf, CONF_savelines));
+
+                term_curr->width_pixel = width;
+                term_curr->height_pixel = height;
+                term_curr->status &= ~TERMLIST_FONT_IS_CHANGED;
+            }
+        }
+
+        term_update(term);
+
+        {   // a hacking for the update of the scroll bar when switch between two sessions
+            SCROLLINFO si = { 0 };
+
+            int sblines = count234(term->scrollback);
+            if (term->erase_to_scrollback &&
+                term->alt_which && term->alt_screen) {
+                sblines += term->alt_sblines;
+            }
+
+            si.cbSize = sizeof(si);
+            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+            si.nMin = 0;
+            si.nMax = sblines + term->rows - 1;
+            si.nPage = term->rows;
+            si.nPos = sblines + term->disptop;
+            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, TRUE);
+        }
+
+        InvalidateRect(wgs.term_hwnd, NULL, true);
+        bRet = TRUE;
+    }
+    return bRet;
+}
+
+int PuTTY_RemoveSession(void* handle)
+{
+    int nRet = SELECT_NOTHING;
+    TermList* tl = (TermList*)handle;
+    if (tl && term_count > 1) // if we have one session, we cannot delete it.
+    {
+        nRet = SELECT_RIGHTSIDE;
+        if (tl->next) // we have a session on the right
+        {
+            term_curr = tl->next;
+            if (tl->prev) // we also have a session on the left
+            {
+                tl->prev->next = tl->next;
+                tl->next->prev = tl->prev;
+            }
+            else
+            {
+                assert(tl == term_head);
+                term_head = tl->next;
+                term_head->prev = NULL;
+            }
+        }
+        else // we have a session on the left
+        {
+            assert(tl->prev);
+            assert(tl == term_tail);
+            term_curr = term_tail = tl->prev;
+            term_tail->next = NULL;
+            nRet = SELECT_LEFTSIDE;
+        }
+
+        term->term_status &= ~TERM_SHOWING;
+        term_set_focus(term, false);
+
+        free_term_list(tl);
+        term_count--;
+
+        conf = term_curr->conf;
+        logctx = term_curr->logctx;
+        backend = term_curr->backend;
+        ldisc = term_curr->ldisc;
+
+        term = term_curr->term;
+
+        term->term_status |= TERM_SHOWING;
+        term_set_focus(term, true);
+        term_update(term);
+
+        {   // a hacking for the update of the scroll bar when switch between two sessions
+            SCROLLINFO si = { 0 };
+
+            int sblines = count234(term->scrollback);
+            if (term->erase_to_scrollback &&
+                term->alt_which && term->alt_screen) {
+                sblines += term->alt_sblines;
+            }
+
+            si.cbSize = sizeof(si);
+            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+            si.nMin = 0;
+            si.nMax = sblines + term->rows - 1;
+            si.nPage = term->rows;
+            si.nPos = sblines + term->disptop;
+            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, TRUE);
+        }
+
+        InvalidateRect(wgs.term_hwnd, NULL, true);
+    }
+
+    return nRet;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+#if 0
+static LRESULT ConfDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, void* ctx)
+{
+    return sw_DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+static INT_PTR CALLBACK ConfRealDlgProc(HWND hwnd, UINT msg,
+    WPARAM wParam, LPARAM lParam)
+{
+#if 0
+    struct ShinyDialogBoxState* state = ShinyDialogGetState(hwnd);
+    return state->proc(hwnd, msg, wParam, lParam, state->ctx);
+#endif 
+    return sw_DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+static int PuTTYDialogBox(HINSTANCE hinst, LPCTSTR tmpl, const wchar_t* winclass,
+    HWND hwndparent, ShinyDlgProc proc, void* ctx)
+{
+
+    /*
+     * Register the window class ourselves in such a way that we
+     * allocate an extra word of window memory to store the state
+     * pointer.
+     *
+     * It would be nice in principle to load the dialog template
+     * resource and dig the class name out of it. But DLGTEMPLATEEX is
+     * a nasty variable-layout structure not declared conveniently in
+     * a header file, so I think that's too much effort. Callers of
+     * this function will just have to provide the right window class
+     * name to match their template resource via the 'winclass'
+     * parameter.
+     */
+    WNDCLASS wc;
+    wc.style = CS_DBLCLKS | CS_SAVEBITS | CS_BYTEALIGNWINDOW;
+    wc.lpfnWndProc = DefDlgProc;
+    wc.cbClsExtra = 0;
+    wc.cbWndExtra = DLGWINDOWEXTRA + sizeof(LONG_PTR);
+    wc.hInstance = hinst;
+    wc.hIcon = NULL;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1);
+    wc.lpszMenuName = NULL;
+    wc.lpszClassName = winclass;
+    RegisterClass(&wc);
+#if 0
+    struct ShinyDialogBoxState state[1];
+    state->ended = false;
+    state->proc = proc;
+    state->ctx = ctx;
+    sdb_tempstate = state;
+#endif 
+    HWND hwnd = CreateDialog(hinst, tmpl, hwndparent, ConfRealDlgProc);
+#if 0
+    SetWindowLongPtr(hwnd, DLGWINDOWEXTRA, (LONG_PTR)state);
+    sdb_tempstate = NULL;
+#endif 
+    MSG msg;
+    int gm;
+    while ((gm = GetMessage(&msg, NULL, 0, 0)) > 0) 
+    {
+        //if (!state->ended && !IsDialogMessage(hwnd, &msg))
+            DispatchMessage(&msg);
+#if 0
+        if (state->ended)
+            break;
+#endif 
+    }
+
+    if (gm == 0)
+        PostQuitMessage(msg.wParam); /* We got a WM_QUIT, pass it on */
+
+    DestroyWindow(hwnd);
+#if 0
+    return state->result;
+#endif 
+    return 0;
+}
+
+static bool DoReconfig(HWND hwnd, Conf* conf, int protcfginfo)
+{
+    PuTTYDialogBox(hinst, MAKEINTRESOURCE(IDD_CONFBOX), L"PuTTYConfigBox", hwnd, ConfDlgProc, NULL);
+    return false;
+}
+#endif 
+
 void PuTTY_Config(HWND hWnd)
 {
     static bool reconfiguring = false;
@@ -7080,9 +6977,11 @@ void PuTTY_Config(HWND hWnd)
         term_pre_reconfig(term, conf);
         prev_conf = conf_copy(conf);
 
+        //reconfig_result = DoReconfig(hWnd, conf, 0);
         reconfig_result = do_reconfig(hWnd, conf, backend ? backend_cfg_info(backend) : 0);
+        
         reconfiguring = false;
-        if (!reconfig_result) 
+        if (!reconfig_result)
         {
             conf_free(prev_conf);
             return;
@@ -7240,14 +7139,29 @@ void PuTTY_Config(HWND hWnd)
                 resize_action == RESIZE_EITHER ||
                 resize_action != conf_get_int(prev_conf,
                     CONF_resize_action))
-                init_lvl = 2;
+                    init_lvl = 2;
 #endif 
-                {
-                    deinit_fonts();
-                    init_fonts(0, 0);
-                }
-        }
+            {
+                RECT rc = { 0 };
+                deinit_fonts();
+                init_fonts(0, 0);
 
+                GetClientRect(wgs.term_hwnd, &rc);
+                int cw = rc.right - rc.left;
+                int ch = rc.bottom - rc.top;
+
+                wm_size_resize_term(cw, ch, true);
+                sys_cursor_update();
+                PostMessage(hWndMain, WM_PUTTY_NOTIFY, term->rows, term->cols);
+
+                TermList* tl = term_head;
+                while (tl)
+                {
+                    tl->status |= TERMLIST_FONT_IS_CHANGED;
+                    tl = tl->next;
+                }
+            }
+        }
         InvalidateRect(wgs.term_hwnd, NULL, true);
 #if 0
         reset_window(init_lvl);
@@ -7255,213 +7169,3 @@ void PuTTY_Config(HWND hWnd)
         conf_free(prev_conf);
     }
 }
-
-void PuTTY_EnterSizing(void)
-{
-    resizing = true;
-    need_backend_resize = false;
-}
-
-void PuTTY_ExitSizing(void)
-{
-    int cw, ch;
-    RECT rc = { 0 };
-
-    resizing = false;
-
-    GetClientRect(wgs.term_hwnd, &rc);
-    cw = rc.right - rc.left;
-    ch = rc.bottom - rc.top;
-
-    if (prev_client_width != cw || prev_client_height != ch)
-    {
-        prev_client_width = cw;
-        prev_client_height = ch;
-
-        term_notify_minimised(term, false);
-
-        GetWindowRect(wgs.term_hwnd, &rc);
-        cw = rc.right - rc.left;
-        ch = rc.bottom - rc.top;
-        term_notify_window_size_pixels(term, cw, ch);
-
-        wm_size_resize_term(prev_client_width, prev_client_height, true);
-        sys_cursor_update();
-        //reset_window(0);
-    }
-    InvalidateRect(wgs.term_hwnd, NULL, true);
-
-    PostMessage(hWndMain, WM_PUTTY_NOTIFY, term->rows, term->cols);
-}
-
-void* PuTTY_NewSession()
-{
-    void* vRet = NULL;
-
-    if (term_count <= 60) // the maximum tabs we can support is 63
-    {
-        int row, col;
-
-        TermList* sess = snew(TermList);
-        memset(sess, 0, sizeof(TermList));
-
-        term_tail->next = sess;
-        sess->prev = term_tail;
-        term_curr = term_tail = sess;
-        term_count++;
-
-        conf = term_curr->conf = conf_new();
-        gui_term_process_cmdline(conf, (char*)"");
-        term_curr->term = term_init(conf, &ucsdata, wintw);
-
-        //shellcmd = NULL; // (char*)"ssh -i d:\\zterm\\1.pem ubuntu@zterm.ai";
-
-        row = term->rows;
-        col = term->cols;
-        term->term_status &= ~TERM_SHOWING;
-        term_set_focus(term, false);
-
-        term = term_curr->term;
-        term->term_status |= TERM_SHOWING;
-        setup_clipboards(term, conf);
-        logctx = log_init(&wgs.logpolicy, conf);
-        term_curr->logctx = logctx;
-        term_provide_logctx(term, logctx);
-
-        term_size(term, row, col, conf_get_int(conf, CONF_savelines));
-        start_backend();
-        term_curr->backend = backend;
-        term_curr->ldisc = ldisc;
-
-        term_set_focus(term, true);
-        term_update(term);
-
-        {
-            SCROLLINFO si;
-            si.cbSize = sizeof(si);
-            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-            si.nMin = 0;
-            si.nMax = term->rows - 1;
-            si.nPage = term->rows;
-            si.nPos = 0;
-            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
-        }
-
-        InvalidateRect(wgs.term_hwnd, NULL, true);
-
-        vRet = term_curr;
-    }
-
-    return vRet;
-}
-
-BOOL PuTTY_SwitchSession(void* handle)
-{
-    BOOL bRet = FALSE;
-    TermList* tl = (TermList*)handle;
-    if (tl)
-    {
-#if 0
-        int row = term->rows;
-        int col = term->cols;
-#endif 
-        term->term_status &= ~TERM_SHOWING;
-        term_set_focus(term, false);
-
-        conf = tl->conf;
-        logctx = tl->logctx;
-        backend = tl->backend;
-        ldisc = tl->ldisc;
-
-        term = tl->term;
-
-        term->term_status |= TERM_SHOWING;
-        term_set_focus(term, true);
-        term_update(term);
-
-        term_curr = tl;
-#if 0
-        {
-            SCROLLINFO si;
-            si.cbSize = sizeof(si);
-            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-            si.nMin = 0;
-            si.nMax = term->rows - 1;
-            si.nPage = term->rows;
-            si.nPos = 0;
-            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
-        }
-#endif 
-        InvalidateRect(wgs.term_hwnd, NULL, true);
-
-        bRet = TRUE;
-    }
-
-    return bRet;
-}
-
-int PuTTY_RemoveSession(void* handle)
-{
-    int nRet = SELECT_NOTHING;
-    TermList* tl = (TermList*)handle;
-    if (tl && term_count > 1) // if we have one session, we cannot delete it.
-    {
-        nRet = SELECT_RIGHTSIDE;
-        if (tl->next) // we have a session on the right
-        {
-            term_curr = tl->next;
-            if (tl->prev) // we also have a session on the left
-            {
-                tl->prev->next = tl->next;
-                tl->next->prev = tl->prev;
-            }
-            else
-            {
-                assert(tl == term_head);
-                term_head = tl->next;
-                term_head->prev = NULL;
-            }
-        }
-        else // we have a session on the left
-        {
-            assert(tl->prev);
-            assert(tl == term_tail);
-            term_curr = term_tail = tl->prev;
-            term_tail->next = NULL;
-            nRet = SELECT_LEFTSIDE;
-        }
-
-        term->term_status &= ~TERM_SHOWING;
-        term_set_focus(term, false);
-
-        free_term_list(tl);
-        term_count--;
-
-        conf = term_curr->conf;
-        logctx = term_curr->logctx;
-        backend = term_curr->backend;
-        ldisc = term_curr->ldisc;
-
-        term = term_curr->term;
-
-        term->term_status |= TERM_SHOWING;
-        term_set_focus(term, true);
-        term_update(term);
-#if 0
-        {
-            SCROLLINFO si;
-            si.cbSize = sizeof(si);
-            si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-            si.nMin = 0;
-            si.nMax = term->rows - 1;
-            si.nPage = term->rows;
-            si.nPos = 0;
-            SetScrollInfo(wgs.term_hwnd, SB_VERT, &si, false);
-        }
-#endif 
-        InvalidateRect(wgs.term_hwnd, NULL, true);
-    }
-
-    return nRet;
-}
-

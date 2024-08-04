@@ -107,6 +107,9 @@ public:
 			case VK_INSERT:
 				DoNewSession();
 				break;
+			case VK_DELETE:
+				DoRemoveSession();
+				break;
 			default:
 				break;
 			}
@@ -137,13 +140,13 @@ public:
 			CTCS_CLOSEBUTTON
 		);
 
-		m_viewTab.InsertItem(0, L"cmd.exe[00]", -1, L"command line", true);
+		m_viewTab.InsertItem(0, L"CMD.EXE - [00]", -1, L"command line", true);
 		m_tabCount = 1;
 
 		m = GetSystemMenu(FALSE);
 		AppendMenu(m, MF_SEPARATOR, 0, 0);
 		AppendMenu(m, MF_ENABLED, IDM_NEW_WINDOW, L"New Window");
-		AppendMenu(m, MF_ENABLED, IDM_NEW_SESSION, L"Ne&w Session");
+		AppendMenu(m, MF_ENABLED, IDM_NEW_SESSION, L"Ne&w Session\tCtrl+Insert");
 		AppendMenu(m, MF_ENABLED, IDM_TTY_SETTING, L"TTY Settings...");
 		AppendMenu(m, MF_ENABLED, IDM_COPY_ALL, L"C&opy All to Clipboard");
 #if 0
@@ -292,7 +295,7 @@ public:
 			wchar_t title[128] = { 0 };
 			int idx = m_viewTab.GetItemCount();
 
-			swprintf((wchar_t*)title, 128, L"cmd.exe[%02d]", m_tabCount++);
+			swprintf((wchar_t*)title, 128, L"CMD.EXE - [%02d]", m_tabCount++);
 
 			m_viewTab.InsertItem(idx, title, -1, L"command line", true);
 
@@ -307,6 +310,31 @@ public:
 		{
 			MessageBox(L"You can open 60 tabs at maximum", L"Maximum Tabs Are Reached", MB_OK);
 		}
+	}
+
+	void DoRemoveSession()
+	{
+		int count = m_viewTab.GetItemCount();
+		if (count > 1)
+		{
+			int choice = MessageBox(L"Are you sure to close this session?", L"Close Session", MB_YESNO);
+			if (choice == IDYES)
+			{
+				int idx = m_viewTab.GetCurSel();
+				XCustomTabItem* pItem = m_viewTab.GetItem(idx);
+				if (pItem)
+				{
+					void* handle = pItem->GetPrivateData();
+					int nRet = PuTTY_RemoveSession(handle);
+					if (nRet == SELECT_RIGHTSIDE || nRet == SELECT_LEFTSIDE)
+					{
+						m_viewTab.DeleteItem(idx, true, false);
+					}
+				}
+			}
+			
+		}
+		m_viewTTY.SetFocus();
 	}
 
 	LRESULT OnSysCommand(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
@@ -330,7 +358,7 @@ public:
 		}
 			break;
 		case IDM_TTY_SETTING :
-			//PuTTY_Config(m_hWnd);
+			PuTTY_Config(m_hWnd);
 			break;
 		case IDM_COPY_ALL :
 			PuTTY_CopyAll();

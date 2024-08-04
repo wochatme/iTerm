@@ -6,7 +6,7 @@
 #define IDC_BTN_FONT                    4
 #define IDCANCEL4                       5
 #define IDD_ABOUTDLG                    100
-#define	IDD_MAINBOX						101
+#define	IDD_MAINBOX						102
 #define IDR_MAINFRAME                   128
 #define IDD_CONFIGURAION                201
 #define IDD_OPENURL                     203

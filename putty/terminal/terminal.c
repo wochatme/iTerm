@@ -2035,6 +2035,7 @@ Terminal *term_init(Conf *myconf, struct unicode_data *ucsdata, TermWin *win)
      */
     term = snew(Terminal);
     memset(term, 0, sizeof(Terminal));
+    term->term_status = TERM_SHOWING; /* the term will be available after init */
     term->win = win;
     term->ucsdata = ucsdata;
     term->conf = conf_copy(myconf);
